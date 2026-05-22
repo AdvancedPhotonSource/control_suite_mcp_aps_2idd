@@ -32,6 +32,8 @@ class InstrumentWorker:
             "set_config": self.instrument.set_config,
             "set_attribute": self.instrument.set_attribute,
             "acquire_image": self.instrument.acquire_image,
+            "dump_array": self.instrument.dump_array,
+            "get_attribute_payload": self.instrument.get_attribute_payload,
             "acquire_line_scan": self.instrument.acquire_line_scan,
             "set_parameters": self.instrument.set_parameters,
         }

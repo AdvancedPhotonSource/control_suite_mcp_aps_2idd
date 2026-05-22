@@ -5,6 +5,7 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
+import base64
 import logging
 import os
 
@@ -35,9 +36,6 @@ class AcquisitionBuffers:
         self.psize_0: float | None = None
         self.psize_km1: float | None = None
         self.psize_k: float | None = None
-        self.image_0_path: str | None = None
-        self.image_km1_path: str | None = None
-        self.image_k_path: str | None = None
         self.image_array_artifact_dir = Path(".tmp") / "acquisition_arrays"
         self.image_acquisition_call_history: list[dict[str, Any]] = []
         self.line_scan_call_history: list[dict[str, Any]] = []
@@ -87,41 +85,12 @@ class AcquisitionBuffers:
             }
         )
 
-    def save_image_array_artifact(self, image: np.ndarray) -> str:
-        """Save an acquired image array to a managed ``.npy`` artifact."""
-        artifact_dir = self.image_array_artifact_dir.expanduser().resolve()
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        path = artifact_dir / f"image_{self.counter_acquire_image}_{get_timestamp()}.npy"
-        np.save(path, image)
-        return str(path)
-
-    def collect_referenced_image_array_paths(self) -> set[Path]:
-        """Return currently referenced image array artifact paths."""
-        paths = {self.image_0_path, self.image_km1_path, self.image_k_path}
-        return {Path(path).expanduser().resolve() for path in paths if path is not None}
-
-    def garbage_collect_image_array_artifacts(self) -> None:
-        """Delete unreferenced managed ``.npy`` image artifacts."""
-        artifact_dir = self.image_array_artifact_dir.expanduser().resolve()
-        if not artifact_dir.exists():
-            return
-        live_paths = self.collect_referenced_image_array_paths()
-        for path in artifact_dir.glob("*.npy"):
-            resolved = path.resolve()
-            if resolved not in live_paths:
-                try:
-                    resolved.unlink()
-                except FileNotFoundError:
-                    continue
-
     def get_image_buffer_info_by_name(self, buffer_name: str) -> dict[str, Any]:
-        """Return path, pixel size, and shape metadata for an image buffer."""
+        """Return pixel size and shape metadata for an image buffer."""
         image = getattr(self, buffer_name)
-        path = getattr(self, f"{buffer_name}_path")
         psize = getattr(self, f"psize_{buffer_name.split('_', 1)[1]}")
         return {
             "buffer_name": buffer_name,
-            "array_path": path,
             "psize": psize,
             "shape": None if image is None else list(image.shape),
             "dtype": None if image is None else str(image.dtype),
@@ -139,21 +108,59 @@ class AcquisitionBuffers:
         """Return metadata for the initial image buffer."""
         return self.get_image_buffer_info_by_name("image_0")
 
-    def update_image_buffers(self, new_image: np.ndarray, psize: float = 1) -> str:
-        """Update image buffers and return the saved array artifact path."""
-        new_image_path = self.save_image_array_artifact(new_image)
+    def resolve_image_buffer_name(self, buffer_name: str) -> str:
+        """Resolve public EAA buffer aliases to internal image buffer names."""
+        aliases = {
+            "current": "image_k",
+            "previous": "image_km1",
+            "initial": "image_0",
+            "image_k": "image_k",
+            "image_km1": "image_km1",
+            "image_0": "image_0",
+        }
+        try:
+            return aliases[buffer_name]
+        except KeyError as exc:
+            raise ValueError(
+                "buffer_name must be one of current, previous, initial, "
+                "image_k, image_km1, or image_0."
+            ) from exc
+
+    def get_image_array_payload(self, buffer_name: str) -> dict[str, Any]:
+        """Return a base64-encoded NumPy payload for a buffered image array."""
+        resolved_name = self.resolve_image_buffer_name(buffer_name)
+        image = getattr(self, resolved_name)
+        if image is None:
+            raise ValueError(f"Image buffer is empty: {buffer_name}")
+        contiguous = np.ascontiguousarray(image)
+        return {
+            "encoding": "numpy_base64",
+            "dtype": str(contiguous.dtype),
+            "shape": list(contiguous.shape),
+            "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+        }
+
+    def dump_array(self, buffer_name: str) -> dict[str, str]:
+        """Save a buffered image as a NumPy array artifact."""
+        resolved_name = self.resolve_image_buffer_name(buffer_name)
+        image = getattr(self, resolved_name)
+        if image is None:
+            raise ValueError(f"Image buffer is empty: {buffer_name}")
+        artifact_dir = self.image_array_artifact_dir.expanduser().resolve()
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        array_path = artifact_dir / f"{resolved_name}_{get_timestamp()}.npy"
+        np.save(array_path, image)
+        return {"array_path": str(array_path)}
+
+    def update_image_buffers(self, new_image: np.ndarray, psize: float = 1) -> None:
+        """Update initial, previous, and current image buffers."""
         if self.image_0 is None:
             self.image_0 = new_image
-            self.image_0_path = new_image_path
             self.psize_0 = psize
         self.image_km1 = self.image_k
-        self.image_km1_path = self.image_k_path
         self.psize_km1 = self.psize_k
         self.image_k = new_image
-        self.image_k_path = new_image_path
         self.psize_k = psize
-        self.garbage_collect_image_array_artifacts()
-        return new_image_path
 
 
 class APSTwoIDDAcquireImage(AcquisitionBuffers):
@@ -276,8 +283,8 @@ class APSTwoIDDAcquireImage(AcquisitionBuffers):
         if img_path is not None:
             wait_for_file(img_path, duration=5)
         if img_path and img_arr is not None:
-            array_path = self.update_image_buffers(img_arr, psize=stepsize_x)
-            return {"img_path": img_path, "array_path": array_path, "psize": stepsize_x}
+            self.update_image_buffers(img_arr, psize=stepsize_x)
+            return {"img_path": img_path, "psize": stepsize_x}
         logger.error("Failed to save images for %s", current_mda_file)
         return {"result": f"Failed to save images for {current_mda_file}"}
 

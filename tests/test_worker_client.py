@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
+import base64
 import multiprocessing as mp
 import time
+
+import numpy as np
 
 from control_suite_mcp_aps_2idd.worker import InstrumentWorker
 from control_suite_mcp_aps_2idd.zmq_client import WorkerClient
@@ -16,6 +19,7 @@ class FakeInstrument:
     def __init__(self) -> None:
         self.line_scan_return_gaussian_fit = False
         self.counter_acquire_image = 0
+        self.current_image = np.array([[1, 2], [3, 4]], dtype=np.float32)
 
     def health(self) -> dict[str, str]:
         """Return fake worker health."""
@@ -50,13 +54,30 @@ class FakeInstrument:
         self.counter_acquire_image += 1
         return {
             "img_path": "/tmp/fake.png",
-            "array_path": "/tmp/fake.npy",
             "psize": stepsize_x,
             "width": width,
             "height": height,
             "x_center": x_center,
             "y_center": y_center,
             "stepsize_y": stepsize_y,
+        }
+
+    def dump_array(self, buffer_name: str) -> dict[str, str]:
+        """Return a fake array artifact path."""
+        if buffer_name not in {"image_k", "image_km1", "image_0"}:
+            raise ValueError(buffer_name)
+        return {"array_path": f"/tmp/{buffer_name}.npy"}
+
+    def get_attribute_payload(self, name: str) -> Any:
+        """Return a fake EAA attribute payload."""
+        if name != "current_image":
+            raise AttributeError(name)
+        image = np.ascontiguousarray(self.current_image)
+        return {
+            "encoding": "numpy_base64",
+            "dtype": str(image.dtype),
+            "shape": list(image.shape),
+            "data": base64.b64encode(image.tobytes()).decode("ascii"),
         }
 
     def acquire_line_scan(
@@ -112,8 +133,18 @@ def test_worker_client_exposes_contract_methods() -> None:
             },
         )
         assert image_result["img_path"] == "/tmp/fake.png"
-        assert image_result["array_path"] == "/tmp/fake.npy"
+        assert "array_path" not in image_result
         assert image_result["psize"] == 0.5
+        assert client.call("dump_array", {"buffer_name": "image_k"}) == {
+            "array_path": "/tmp/image_k.npy"
+        }
+        payload = client.call("get_attribute_payload", {"name": "current_image"})
+        decoded = np.frombuffer(
+            base64.b64decode(payload["data"]),
+            dtype=np.dtype(payload["dtype"]),
+        ).reshape(payload["shape"])
+        assert payload["encoding"] == "numpy_base64"
+        assert np.array_equal(decoded, np.array([[1, 2], [3, 4]], dtype=np.float32))
 
         assert client.call(
             "set_attribute",

@@ -35,17 +35,14 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
     async def call_worker(method: str, params: dict[str, Any] | None = None) -> Any:
         return await asyncio.to_thread(client.call, method, params)
 
-    @mcp.tool()
     async def health() -> dict[str, str]:
         """Check whether the instrument worker is reachable."""
         return await call_worker("health")
 
-    @mcp.tool()
     async def get_state() -> dict[str, Any]:
         """Return APS 2-ID-D acquisition state."""
         return await call_worker("get_state")
 
-    @mcp.tool()
     async def set_config(
         name: Annotated[str, "Writable configuration attribute name."],
         value: Annotated[Any, "JSON-serializable value to assign."],
@@ -53,7 +50,6 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
         """Set a writable backend acquisition configuration value."""
         return await call_worker("set_config", {"name": name, "value": value})
 
-    @mcp.tool()
     async def set_attribute(
         name: Annotated[str, "Writable configuration attribute name."],
         value: Annotated[Any, "JSON-serializable value to assign."],
@@ -76,7 +72,12 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
             "The scan step size in the y direction in microns.",
         ],
     ) -> dict[str, Any]:
-        """Acquire an image with the APS 2-ID-D MIC instrument."""
+        """Acquire a 2D MIC image in microns centered at ``(x_center, y_center)``.
+
+        The beamline moves during the scan. The result contains ``img_path`` for
+        the PNG display artifact and ``psize`` for the x pixel size when export
+        succeeds.
+        """
         return await call_worker(
             "acquire_image",
             {
@@ -90,13 +91,44 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
         )
 
     @mcp.tool()
+    async def dump_array(
+        buffer_name: Annotated[
+            str,
+            "Native image buffer name: image_k, image_km1, or image_0.",
+        ],
+    ) -> dict[str, str]:
+        """Write a buffered image to a readable ``.npy`` artifact.
+
+        The result contains ``array_path``. Native buffer order is ``image_0``
+        for the first run image, ``image_km1`` for the previous image, and
+        ``image_k`` for the most recent image.
+        """
+        return await call_worker("dump_array", {"buffer_name": buffer_name})
+
+    @mcp.tool()
+    async def get_attribute_payload(
+        name: Annotated[str, "Native acquisition or parameter tool attribute name."],
+    ) -> Any:
+        """Return an attribute payload for logic-driven EAA adapter calls.
+
+        NumPy arrays are encoded with dtype, shape, and base64 byte data so the
+        adapter can preserve array semantics without importing EAA here.
+        """
+        return await call_worker("get_attribute_payload", {"name": name})
+
+    @mcp.tool()
     async def acquire_line_scan(
         length: Annotated[float, "The length of the line scan in microns."],
         x_center: Annotated[float, "The scan center x position in microns."],
         y_center: Annotated[float, "The scan center y position in microns."],
         stepsize_x: Annotated[float, "The line-scan step size in microns."],
     ) -> dict[str, Any]:
-        """Acquire a horizontal line scan with the APS 2-ID-D MIC instrument."""
+        """Acquire a horizontal line scan in microns centered at the given position.
+
+        The beamline moves along x at the requested y position. The result
+        contains ``img_path`` and may contain Gaussian fit fields including
+        ``fwhm`` when line-scan fit output is enabled.
+        """
         return await call_worker(
             "acquire_line_scan",
             {
@@ -114,7 +146,11 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
             "Parameter values to set. For APS 2-ID-D this should contain zp-z.",
         ],
     ) -> str:
-        """Set beamline tuning parameters."""
+        """Move beamline tuning parameters.
+
+        For APS 2-ID-D ``parameters[0]`` is the zone-plate z position and
+        invokes motor motion after worker-side range validation.
+        """
         return await call_worker("set_parameters", {"parameters": parameters})
 
     return mcp

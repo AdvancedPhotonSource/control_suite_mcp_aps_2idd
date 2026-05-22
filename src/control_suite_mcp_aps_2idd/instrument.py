@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import base64
 import logging
 
 import numpy as np
@@ -35,6 +36,19 @@ def json_safe(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return value.tolist()
     return value
+
+
+def get_attribute_payload(value: Any) -> Any:
+    """Serialize a native attribute value for MCP transport."""
+    if isinstance(value, np.ndarray):
+        contiguous = np.ascontiguousarray(value)
+        return {
+            "encoding": "numpy_base64",
+            "dtype": str(contiguous.dtype),
+            "shape": list(contiguous.shape),
+            "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+        }
+    return json_safe(value)
 
 
 @dataclass(frozen=True)
@@ -270,6 +284,18 @@ class APSTwoIDDMICInstrument:
             stepsize_y=stepsize_y,
         )
         return json_safe(result)
+
+    def dump_array(self, buffer_name: str) -> dict[str, str]:
+        """Save a named acquisition image buffer as a ``.npy`` artifact."""
+        return self.acquire_image_tool.dump_array(buffer_name=buffer_name)
+
+    def get_attribute_payload(self, name: str) -> Any:
+        """Return an acquisition or tuning tool attribute for EAA adapter code."""
+        if hasattr(self.acquire_image_tool, name):
+            value = getattr(self.acquire_image_tool, name)
+        else:
+            value = getattr(self.param_tuning_tool, name)
+        return get_attribute_payload(value)
 
     def acquire_line_scan(
         self,
