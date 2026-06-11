@@ -1,4 +1,4 @@
-"""FastMCP HTTP server that forwards APS 2-ID-D tools to ZMQ."""
+"""FastMCP HTTP server for APS 2-ID-D tools backed directly by QueueServer."""
 
 from __future__ import annotations
 
@@ -9,53 +9,98 @@ import logging
 
 from fastmcp import FastMCP
 
-from control_suite_mcp_aps_2idd.zmq_client import WorkerClient
+from control_suite_mcp_aps_2idd.common import APSTwoIDDConfig, parse_range
+from control_suite_mcp_aps_2idd.qserver_client import QServerActionConfig, QServerConnectionConfig
+from control_suite_mcp_aps_2idd.qserver_instrument import QServerAPSTwoIDDMICInstrument
 
 logger = logging.getLogger(__name__)
 
 
-def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
-    """Create the FastMCP server.
+def build_service_config(args: argparse.Namespace) -> APSTwoIDDConfig:
+    """Build service configuration from CLI args."""
+    return APSTwoIDDConfig(
+        sample_name=args.sample_name,
+        dwell_imaging=args.dwell_imaging,
+        dwell_line_scan=args.dwell_line_scan,
+        xrf_on=not args.no_xrf,
+        preamp1_on=args.preamp1_on,
+        using_xrf_maps=args.using_xrf_maps,
+        xrf_elms=tuple(args.xrf_elms),
+        xrf_roi_num=args.xrf_roi_num,
+        allowable_x_range=parse_range(args.allowable_x_range),
+        allowable_y_range=parse_range(args.allowable_y_range),
+        allowable_z_range=parse_range(args.allowable_z_range),
+        plot_image_in_log_scale=args.plot_image_in_log_scale,
+        show_colorbar_in_image=args.show_colorbar_in_image,
+        line_scan_return_gaussian_fit=args.line_scan_return_gaussian_fit,
+        scan_samy=not args.no_scan_samy,
+    )
 
-    Parameters
-    ----------
-    worker_endpoint
-        ZMQ endpoint used to reach the instrument worker.
-    timeout_ms
-        Worker request timeout in milliseconds.
 
-    Returns
-    -------
-    FastMCP
-        Configured MCP server.
-    """
+def build_qserver_connection_config(args: argparse.Namespace) -> QServerConnectionConfig:
+    """Build QueueServer connection settings from CLI args."""
+    return QServerConnectionConfig(
+        zmq_control_addr=args.qserver_control_addr,
+        zmq_info_addr=args.qserver_info_addr,
+        user_group=args.qserver_user_group,
+        user=args.qserver_user,
+        lock_key=args.qserver_lock_key,
+        timeout_s=args.qserver_timeout_s,
+        beamline_monitor_manifest_path=args.qserver_beamline_monitor_manifest,
+        actions=QServerActionConfig(
+            acquire_image_plan=args.qserver_acquire_image_plan,
+            acquire_line_scan_plan=args.qserver_acquire_line_scan_plan,
+            get_save_data_path_function=args.qserver_get_save_data_path_function,
+            move_samy_function=args.qserver_move_samy_function,
+            set_zp_z_function=args.qserver_set_zp_z_function,
+        ),
+    )
+
+
+def create_mcp(
+    *,
+    service_config: APSTwoIDDConfig | None = None,
+    qserver_connection_config: QServerConnectionConfig | None = None,
+) -> FastMCP:
+    """Create the FastMCP server."""
     mcp = FastMCP("Control Suite MCP APS 2-ID-D")
-    client = WorkerClient(worker_endpoint, timeout_ms=timeout_ms)
+    instrument = QServerAPSTwoIDDMICInstrument(
+        APSTwoIDDConfig() if service_config is None else service_config,
+        qserver_config=(
+            QServerConnectionConfig.from_env()
+            if qserver_connection_config is None
+            else qserver_connection_config
+        ),
+    )
 
-    async def call_worker(method: str, params: dict[str, Any] | None = None) -> Any:
-        return await asyncio.to_thread(client.call, method, params)
+    async def call_backend(method: str, params: dict[str, Any] | None = None) -> Any:
+        handler = getattr(instrument, method)
+        payload = {} if params is None else params
+        return await asyncio.to_thread(handler, **payload)
 
-    async def health() -> dict[str, str]:
-        """Check whether the instrument worker is reachable."""
-        return await call_worker("health")
+    @mcp.tool()
+    async def health() -> dict[str, Any]:
+        """Check whether QueueServer is reachable and the MCP backend is healthy."""
+        return await call_backend("health")
 
+    @mcp.tool()
     async def get_state() -> dict[str, Any]:
-        """Return APS 2-ID-D acquisition state."""
-        return await call_worker("get_state")
+        """Return APS 2-ID-D service and QueueServer state."""
+        return await call_backend("get_state")
 
     async def set_config(
         name: Annotated[str, "Writable configuration attribute name."],
         value: Annotated[Any, "JSON-serializable value to assign."],
     ) -> dict[str, Any]:
         """Set a writable backend acquisition configuration value."""
-        return await call_worker("set_config", {"name": name, "value": value})
+        return await call_backend("set_config", {"name": name, "value": value})
 
     async def set_attribute(
         name: Annotated[str, "Writable configuration attribute name."],
         value: Annotated[Any, "JSON-serializable value to assign."],
     ) -> dict[str, Any]:
         """Alias for ``set_config`` used by EAA MCP acquisition proxy."""
-        return await call_worker("set_attribute", {"name": name, "value": value})
+        return await call_backend("set_attribute", {"name": name, "value": value})
 
     @mcp.tool()
     async def acquire_image(
@@ -74,11 +119,11 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
     ) -> dict[str, Any]:
         """Acquire a 2D MIC image in microns centered at ``(x_center, y_center)``.
 
-        The beamline moves during the scan. The result contains ``img_path`` for
-        the PNG display artifact and ``psize`` for the x pixel size when export
-        succeeds.
+        The beamline moves during the scan through QueueServer. The result
+        contains QueueServer task metadata such as ``task_uid``, ``run_uids``,
+        ``scan_ids``, and ``save_data_path``.
         """
-        return await call_worker(
+        return await call_backend(
             "acquire_image",
             {
                 "width": width,
@@ -97,13 +142,8 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
             "Native image buffer name: image_k, image_km1, or image_0.",
         ],
     ) -> dict[str, str]:
-        """Write a buffered image to a readable ``.npy`` artifact.
-
-        The result contains ``array_path``. Native buffer order is ``image_0``
-        for the first run image, ``image_km1`` for the previous image, and
-        ``image_k`` for the most recent image.
-        """
-        return await call_worker("dump_array", {"buffer_name": buffer_name})
+        """Raise an error because direct QueueServer mode has no local image buffers."""
+        return await call_backend("dump_array", {"buffer_name": buffer_name})
 
     @mcp.tool()
     async def get_attribute_payload(
@@ -114,7 +154,7 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
         NumPy arrays are encoded with dtype, shape, and base64 byte data so the
         adapter can preserve array semantics without importing EAA here.
         """
-        return await call_worker("get_attribute_payload", {"name": name})
+        return await call_backend("get_attribute_payload", {"name": name})
 
     @mcp.tool()
     async def acquire_line_scan(
@@ -125,11 +165,11 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
     ) -> dict[str, Any]:
         """Acquire a horizontal line scan in microns centered at the given position.
 
-        The beamline moves along x at the requested y position. The result
-        contains ``img_path`` and may contain Gaussian fit fields including
-        ``fwhm`` when line-scan fit output is enabled.
+        The beamline moves along x at the requested y position through
+        QueueServer. The result contains QueueServer task metadata such as
+        ``task_uid``, ``run_uids``, ``scan_ids``, and ``save_data_path``.
         """
-        return await call_worker(
+        return await call_backend(
             "acquire_line_scan",
             {
                 "length": length,
@@ -151,7 +191,7 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
         For APS 2-ID-D ``parameters[0]`` is the zone-plate z position and
         invokes motor motion after worker-side range validation.
         """
-        return await call_worker("set_parameters", {"parameters": parameters})
+        return await call_backend("set_parameters", {"parameters": parameters})
 
     return mcp
 
@@ -159,11 +199,36 @@ def create_mcp(worker_endpoint: str, timeout_ms: int = 30_000) -> FastMCP:
 def build_parser() -> argparse.ArgumentParser:
     """Build the MCP server CLI parser."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--worker", default="tcp://127.0.0.1:5555")
-    parser.add_argument("--timeout-ms", type=int, default=30_000)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8050)
     parser.add_argument("--path", default="/mcp")
+    parser.add_argument("--sample-name", default="smp1")
+    parser.add_argument("--dwell-imaging", type=float, default=0.05)
+    parser.add_argument("--dwell-line-scan", type=float, default=0.2)
+    parser.add_argument("--no-xrf", action="store_true")
+    parser.add_argument("--preamp1-on", action="store_true")
+    parser.add_argument("--using-xrf-maps", action="store_true")
+    parser.add_argument("--xrf-elms", nargs="+", default=["Cr"])
+    parser.add_argument("--xrf-roi-num", type=int, default=16)
+    parser.add_argument("--allowable-x-range", default=None, help="Comma-separated lower,upper.")
+    parser.add_argument("--allowable-y-range", default=None, help="Comma-separated lower,upper.")
+    parser.add_argument("--allowable-z-range", default=None, help="Comma-separated lower,upper.")
+    parser.add_argument("--plot-image-in-log-scale", action="store_true")
+    parser.add_argument("--show-colorbar-in-image", action="store_true")
+    parser.add_argument("--line-scan-return-gaussian-fit", action="store_true")
+    parser.add_argument("--no-scan-samy", action="store_true")
+    parser.add_argument("--qserver-control-addr", default="tcp://127.0.0.1:60615")
+    parser.add_argument("--qserver-info-addr", default="tcp://127.0.0.1:60625")
+    parser.add_argument("--qserver-user-group", default="root")
+    parser.add_argument("--qserver-user", default=None)
+    parser.add_argument("--qserver-lock-key", default=None)
+    parser.add_argument("--qserver-timeout-s", type=float, default=120.0)
+    parser.add_argument("--qserver-beamline-monitor-manifest", default=None)
+    parser.add_argument("--qserver-acquire-image-plan", default="fly2d_scanrecord")
+    parser.add_argument("--qserver-acquire-line-scan-plan", default="step1d_scanrecord")
+    parser.add_argument("--qserver-get-save-data-path-function", default="get_save_data_path")
+    parser.add_argument("--qserver-move-samy-function", default=None)
+    parser.add_argument("--qserver-set-zp-z-function", default=None)
     return parser
 
 
@@ -171,8 +236,15 @@ def main() -> None:
     """Run the FastMCP HTTP server."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = build_parser().parse_args()
-    logger.info("Starting MCP server, forwarding to worker at %s", args.worker)
-    mcp = create_mcp(args.worker, timeout_ms=args.timeout_ms)
+    logger.info(
+        "Starting MCP server with direct QueueServer backend at %s / %s",
+        args.qserver_control_addr,
+        args.qserver_info_addr,
+    )
+    mcp = create_mcp(
+        service_config=build_service_config(args),
+        qserver_connection_config=build_qserver_connection_config(args),
+    )
     mcp.run(transport="http", host=args.host, port=args.port, path=args.path)
 
 
