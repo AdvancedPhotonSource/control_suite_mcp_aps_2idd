@@ -34,23 +34,23 @@ Start the MCP server and point it at QueueServer:
 
 ```bash
 control-suite-aps-2idd-mcp \
-  --qserver-control-addr tcp://sec2idd.xray.aps.anl.gov:60615 \
-  --qserver-info-addr tcp://sec2idd.xray.aps.anl.gov:60625 \
+  --qserver-control-addr tcp://[hostname]:60615 \
+  --qserver-info-addr tcp://[hostname]:60625 \
   --host 0.0.0.0 \
   --port 8050 \
   --path /mcp
 ```
 
 If QueueServer is running on the same host as the MCP server, replace
-`sec2idd.xray.aps.anl.gov` with `127.0.0.1`.
+`[hostname]` with `127.0.0.1`.
 
 If line scans need sample-y motion or `set_parameters()` needs zp-z motion,
 also configure approved QueueServer helper functions:
 
 ```bash
 control-suite-aps-2idd-mcp \
-  --qserver-control-addr tcp://sec2idd.xray.aps.anl.gov:60615 \
-  --qserver-info-addr tcp://sec2idd.xray.aps.anl.gov:60625 \
+  --qserver-control-addr tcp://[hostname]:60615 \
+  --qserver-info-addr tcp://[hostname]:60625 \
   --qserver-move-samy-function YOUR_MOVE_SAMY_FUNCTION \
   --qserver-set-zp-z-function YOUR_SET_ZP_Z_FUNCTION \
   --host 0.0.0.0 \
