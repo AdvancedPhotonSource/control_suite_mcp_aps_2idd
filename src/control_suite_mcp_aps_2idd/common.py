@@ -29,6 +29,7 @@ def validate_position_in_range(
     center: float | None,
     allowable_range: tuple[float, float] | None,
     axis_label: str,
+    unit: str = "um",
 ) -> None:
     """Validate that a position lies within an allowable range."""
     if allowable_range is None:
@@ -50,8 +51,8 @@ def validate_position_in_range(
         )
     if not lower <= center <= upper:
         raise ValueError(
-            f"The scan center position in the {axis_label} direction {center} um is out "
-            f"of the allowable range {allowable_range} um."
+            f"The scan center position in the {axis_label} direction {center} {unit} is out "
+            f"of the allowable range {allowable_range} {unit}."
         )
 
 
@@ -70,6 +71,7 @@ class APSTwoIDDConfig:
     allowable_x_range: tuple[float, float] | None = None
     allowable_y_range: tuple[float, float] | None = None
     allowable_z_range: tuple[float, float] | None = None
+    allowable_energy_range: tuple[float, float] | None = None
     plot_image_in_log_scale: bool = False
     show_colorbar_in_image: bool = False
     line_scan_return_gaussian_fit: bool = False

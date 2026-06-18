@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +20,30 @@ def _optional_float_pair(value: tuple[float, float] | None) -> tuple[float, floa
 
 @dataclass(frozen=True)
 class QServerActionConfig:
-    """Allowlisted QueueServer actions exposed to the MCP service."""
+    """Allowlisted QueueServer item linkage for MCP actions.
 
-    acquire_image_plan: str = "fly2d_scanrecord"
-    acquire_line_scan_plan: str = "step1d_scanrecord"
-    get_save_data_path_function: str = "get_save_data_path"
-    move_samy_function: str | None = None
-    set_zp_z_function: str | None = None
+    Each field maps one MCP-facing action to a named QueueServer item in the
+    worker environment. The MCP service never forwards arbitrary plan or
+    function names; it only submits the allowlisted names configured here.
+
+    Current linkage model:
+    - ``acquire_image`` backs the MCP ``acquire_image`` tool.
+    - ``acquire_line_scan`` backs the MCP ``acquire_line_scan`` tool.
+    - ``move_sample`` backs the MCP ``move_sample`` tool and is also reused
+      internally when line scans need sample-y positioning.
+    - ``move_zp_z`` backs the MCP ``set_parameters`` path for zp-z motion.
+    - ``get_save_data_path`` fetches current save-path metadata.
+
+    All motion and acquisition actions are expected to be QueueServer plans in
+    the current design. ``get_save_data_path`` remains a QueueServer helper
+    function because it is a metadata lookup rather than a motion or scan item.
+    """
+
+    acquire_image: str = "fly2d_scanrecord"
+    acquire_line_scan: str = "step1d_scanrecord"
+    move_sample: str | None = None
+    move_zp_z: str | None = None
+    get_save_data_path: str = "get_save_data_path"
 
 
 @dataclass(frozen=True)
@@ -58,17 +76,17 @@ class QServerConnectionConfig:
             timeout_s=float(os.getenv("QSERVER_TIMEOUT_S", str(default_timeout_s))),
             beamline_monitor_manifest_path=os.getenv("QSERVER_BEAMLINE_MONITOR_MANIFEST"),
             actions=QServerActionConfig(
-                acquire_image_plan=os.getenv("QSERVER_ACQUIRE_IMAGE_PLAN", "fly2d_scanrecord"),
-                acquire_line_scan_plan=os.getenv(
+                acquire_image=os.getenv("QSERVER_ACQUIRE_IMAGE_PLAN", "fly2d_scanrecord"),
+                acquire_line_scan=os.getenv(
                     "QSERVER_ACQUIRE_LINE_SCAN_PLAN",
                     "step1d_scanrecord",
                 ),
-                get_save_data_path_function=os.getenv(
+                move_sample=os.getenv("QSERVER_MOVE_SAMPLE_PLAN") or None,
+                move_zp_z=os.getenv("QSERVER_MOVE_ZP_Z_PLAN") or None,
+                get_save_data_path=os.getenv(
                     "QSERVER_GET_SAVE_DATA_PATH_FUNCTION",
                     "get_save_data_path",
                 ),
-                move_samy_function=os.getenv("QSERVER_MOVE_SAMY_FUNCTION") or None,
-                set_zp_z_function=os.getenv("QSERVER_SET_ZP_Z_FUNCTION") or None,
             ),
         )
 
@@ -129,42 +147,73 @@ class RestrictedQServerClient:
     def get_save_data_path(self, *, timeout: float | None = None) -> Any:
         """Run the allowlisted QueueServer helper that reports the data path."""
         return self._execute_function(
-            self.config.actions.get_save_data_path_function,
+            self.config.actions.get_save_data_path,
             timeout=timeout,
         )
 
-    def run_acquire_image(self, kwargs: Mapping[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
+    def run_acquire_image(
+        self,
+        kwargs: Mapping[str, Any],
+        *,
+        timeout: float | None = None,
+        on_console: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         """Execute the allowlisted 2D acquisition plan."""
-        return self._execute_plan(self.config.actions.acquire_image_plan, kwargs, timeout=timeout)
+        return self._execute_plan(
+            self.config.actions.acquire_image,
+            kwargs,
+            timeout=timeout,
+            on_console=on_console,
+        )
 
     def run_acquire_line_scan(
         self,
         kwargs: Mapping[str, Any],
         *,
         timeout: float | None = None,
+        on_console: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Execute the allowlisted 1D acquisition plan."""
-        return self._execute_plan(self.config.actions.acquire_line_scan_plan, kwargs, timeout=timeout)
+        return self._execute_plan(
+            self.config.actions.acquire_line_scan,
+            kwargs,
+            timeout=timeout,
+            on_console=on_console,
+        )
 
-    def move_samy(self, value: float, *, timeout: float | None = None) -> Any:
-        """Execute the allowlisted sample-y helper function."""
-        function_name = self.config.actions.move_samy_function
-        if not function_name:
+    def move_sample(
+        self,
+        axis: str,
+        position: float,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Execute the allowlisted sample-axis move plan."""
+        plan_name = self.config.actions.move_sample
+        if not plan_name:
             raise RuntimeError(
-                "MCP action 'move_samy' is disabled. Configure QSERVER_MOVE_SAMY_FUNCTION "
-                "to an approved QueueServer helper function."
+                "MCP action 'move_sample' is disabled. Configure QSERVER_MOVE_SAMPLE_PLAN "
+                "to an approved QueueServer plan."
             )
-        return self._execute_function(function_name, call_kwargs={"value": float(value)}, timeout=timeout)
+        return self._execute_plan(
+            plan_name,
+            {"axis": str(axis), "position": float(position)},
+            timeout=timeout,
+        )
 
-    def set_zp_z(self, value: float, *, timeout: float | None = None) -> Any:
-        """Execute the allowlisted zp-z helper function."""
-        function_name = self.config.actions.set_zp_z_function
-        if not function_name:
+    def move_zp_z(self, value: float, *, timeout: float | None = None) -> dict[str, Any]:
+        """Execute the allowlisted zp-z move plan."""
+        plan_name = self.config.actions.move_zp_z
+        if not plan_name:
             raise RuntimeError(
-                "MCP action 'set_zp_z' is disabled. Configure QSERVER_SET_ZP_Z_FUNCTION "
-                "to an approved QueueServer helper function."
+                "MCP action 'move_zp_z' is disabled. Configure QSERVER_MOVE_ZP_Z_PLAN "
+                "to an approved QueueServer plan."
             )
-        return self._execute_function(function_name, call_kwargs={"value": float(value)}, timeout=timeout)
+        return self._execute_plan(
+            plan_name,
+            {"position": float(value)},
+            timeout=timeout,
+        )
 
     def _execute_plan(
         self,
@@ -172,7 +221,18 @@ class RestrictedQServerClient:
         kwargs: Mapping[str, Any],
         *,
         timeout: float | None = None,
+        on_console: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        """Run an allowlisted QueueServer plan and wait for it to finish.
+
+        Plans are submitted with ``item_execute``, which starts the item
+        immediately and returns an ``item_uid`` (not a ``task_uid`` -- that
+        field is only produced by ``function_execute``). Completion is detected
+        by waiting for the RE manager to return to idle, and the outcome is read
+        back from QueueServer history. When ``on_console`` is supplied, console
+        output published on the ZMQ info channel is forwarded to the callback
+        while the plan runs so callers can surface live progress.
+        """
         item = self._BPlan(plan_name, **dict(kwargs))
         logger.info("Submitting QueueServer plan %s with kwargs=%s", plan_name, dict(kwargs))
         response = self._rm.item_execute(
@@ -181,13 +241,113 @@ class RestrictedQServerClient:
             user_group=self.config.user_group,
             lock_key=self.config.lock_key,
         )
-        result = self._wait_for_task_result(response, timeout=timeout)
+        if not response.get("success", False):
+            raise RuntimeError(str(response.get("msg", "QueueServer rejected request")))
+        item_uid = self._submitted_item_uid(response)
+        result = self._wait_for_plan_result(item_uid, timeout=timeout, on_console=on_console)
         return {
             "plan_name": plan_name,
-            "task_uid": response.get("task_uid"),
+            "item_uid": item_uid,
             "response": dict(response),
             "task_result": result,
         }
+
+    @staticmethod
+    def _submitted_item_uid(response: Mapping[str, Any]) -> str:
+        item = response.get("item")
+        if isinstance(item, Mapping):
+            item_uid = item.get("item_uid")
+            if isinstance(item_uid, str) and item_uid:
+                return item_uid
+        raise RuntimeError(f"QueueServer did not return an item UID: {response}")
+
+    def _wait_for_plan_result(
+        self,
+        item_uid: str,
+        *,
+        timeout: float | None = None,
+        on_console: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        wait_timeout = timeout or self.config.timeout_s
+        if on_console is not None:
+            self._stream_console_until_idle(on_console, timeout=wait_timeout)
+        else:
+            self._rm.wait_for_idle(timeout=wait_timeout)
+        return self._plan_result_from_history(item_uid)
+
+    def _stream_console_until_idle(
+        self,
+        on_console: Callable[[Mapping[str, Any]], None],
+        *,
+        timeout: float,
+        poll_interval: float = 0.5,
+    ) -> None:
+        """Forward ZMQ console output to ``on_console`` until the manager is idle."""
+        from bluesky_queueserver_api.comm_base import RequestTimeoutError
+
+        def _emit(message: Mapping[str, Any]) -> None:
+            try:
+                on_console(message)
+            except Exception:  # pragma: no cover - callback must not break the wait
+                logger.exception("console callback raised; continuing to wait for plan")
+
+        monitor = self._rm.console_monitor
+        deadline = time.monotonic() + timeout if timeout else None
+        monitor.clear()
+        monitor.enable()
+        try:
+            while True:
+                try:
+                    message = monitor.next_msg(timeout=poll_interval)
+                except RequestTimeoutError:
+                    message = None
+                if message:
+                    _emit(message)
+                    continue
+                if self._rm.status().get("manager_state") == "idle":
+                    break
+                if deadline is not None and time.monotonic() > deadline:
+                    raise RuntimeError(
+                        f"Timed out after {timeout}s waiting for QueueServer plan to finish."
+                    )
+            # Drain any console output buffered up to the moment of completion.
+            while True:
+                try:
+                    message = monitor.next_msg(timeout=0.05)
+                except RequestTimeoutError:
+                    break
+                if not message:
+                    break
+                _emit(message)
+        finally:
+            try:
+                monitor.disable()
+            except Exception:  # pragma: no cover - best-effort teardown
+                logger.exception("failed to disable console monitor")
+
+    def _plan_result_from_history(self, item_uid: str) -> dict[str, Any]:
+        history = self._rm.history_get()
+        items = history.get("items", []) if isinstance(history, Mapping) else []
+        match: Mapping[str, Any] | None = None
+        for entry in reversed(items):
+            if isinstance(entry, Mapping) and entry.get("item_uid") == item_uid:
+                match = entry
+                break
+        if match is None:
+            raise RuntimeError(
+                f"QueueServer plan {item_uid} completed but was not found in history."
+            )
+        result = match.get("result")
+        if not isinstance(result, Mapping):
+            raise RuntimeError(f"QueueServer history item {item_uid} has no result payload.")
+        exit_status = result.get("exit_status")
+        if exit_status not in (None, "completed"):
+            detail = result.get("msg") or result.get("traceback") or exit_status
+            raise RuntimeError(
+                f"QueueServer plan {item_uid} did not complete ({exit_status}): {detail}"
+            )
+        # Wrap so result_run_uids/result_scan_ids/result_return_value keep working.
+        return {"result": dict(result), "exit_status": exit_status, "item_uid": item_uid}
 
     def _execute_function(
         self,
@@ -264,10 +424,20 @@ def normalize_allowable_ranges(
     allowable_x_range: tuple[float, float] | None,
     allowable_y_range: tuple[float, float] | None,
     allowable_z_range: tuple[float, float] | None,
+    allowable_energy_range: tuple[float, float] | None = None,
 ) -> dict[str, tuple[float, float] | None]:
     """Normalize allowed position ranges for state reporting."""
     return {
         "allowable_x_range": _optional_float_pair(allowable_x_range),
         "allowable_y_range": _optional_float_pair(allowable_y_range),
         "allowable_z_range": _optional_float_pair(allowable_z_range),
+        "allowable_energy_range": _optional_float_pair(allowable_energy_range),
     }
+
+
+def result_return_value(task_result: Mapping[str, Any]) -> Any:
+    """Extract the raw return value from a QueueServer task result payload."""
+    payload = task_result.get("result")
+    if not isinstance(payload, Mapping):
+        return None
+    return payload.get("return_value")

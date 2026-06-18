@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from control_suite_mcp_aps_2idd.common import APSTwoIDDConfig, json_safe, validate_position_in_range
@@ -9,6 +10,7 @@ from control_suite_mcp_aps_2idd.qserver_client import (
     QServerConnectionConfig,
     RestrictedQServerClient,
     normalize_allowable_ranges,
+    result_return_value,
     result_run_uids,
     result_scan_ids,
 )
@@ -29,6 +31,7 @@ class QServerAPSTwoIDDMICInstrument:
         "allowable_x_range",
         "allowable_y_range",
         "allowable_z_range",
+        "allowable_energy_range",
         "plot_image_in_log_scale",
         "show_colorbar_in_image",
         "line_scan_return_gaussian_fit",
@@ -73,6 +76,7 @@ class QServerAPSTwoIDDMICInstrument:
                     allowable_x_range=self.config.allowable_x_range,
                     allowable_y_range=self.config.allowable_y_range,
                     allowable_z_range=self.config.allowable_z_range,
+                    allowable_energy_range=self.config.allowable_energy_range,
                 ),
             }
         )
@@ -112,9 +116,12 @@ class QServerAPSTwoIDDMICInstrument:
         y_center: float,
         stepsize_x: float,
         stepsize_y: float,
+        dwell_ms: float | None = None,
+        on_console: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         validate_position_in_range(x_center, self.config.allowable_x_range, "x")
         validate_position_in_range(y_center, self.config.allowable_y_range, "y")
+        dwell = self.config.dwell_imaging * 1000 if dwell_ms is None else dwell_ms
         request = {
             "samplename": self.config.sample_name,
             "width": width,
@@ -123,7 +130,7 @@ class QServerAPSTwoIDDMICInstrument:
             "height": height,
             "y_center": y_center,
             "stepsize_y": stepsize_y,
-            "dwell_ms": self.config.dwell_imaging * 1000,
+            "dwell_ms": dwell,
             "xrf_on": self.config.xrf_on,
             "preamp1_on": self.config.preamp1_on,
         }
@@ -137,12 +144,12 @@ class QServerAPSTwoIDDMICInstrument:
                 "psize_y": stepsize_y,
             }
         )
-        execution = self.qserver.run_acquire_image(request)
+        execution = self.qserver.run_acquire_image(request, on_console=on_console)
         task_result = execution["task_result"]
         return json_safe(
             {
                 "plan_name": execution["plan_name"],
-                "task_uid": execution["task_uid"],
+                "item_uid": execution["item_uid"],
                 "run_uids": result_run_uids(task_result),
                 "scan_ids": result_scan_ids(task_result),
                 "save_data_path": self.qserver.get_save_data_path(timeout=10.0),
@@ -150,47 +157,123 @@ class QServerAPSTwoIDDMICInstrument:
             }
         )
 
+    # Positioner axis -> (allowable range, unit) used for scan-range validation.
+    _line_scan_positioners = ("x", "y", "z", "energy")
+
     def acquire_line_scan(
         self,
+        positioner_name: str,
         length: float,
-        x_center: float,
-        y_center: float,
+        center: float,
         stepsize_x: float,
+        sample_x: float | None = None,
+        sample_y: float | None = None,
+        sample_z: float | None = None,
+        energy: float | None = None,
+        dwell_ms: float | None = None,
+        on_console: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        start_x = x_center - length / 2
-        end_x = x_center + length / 2
-        validate_position_in_range(start_x, self.config.allowable_x_range, "x")
-        validate_position_in_range(end_x, self.config.allowable_x_range, "x")
-        validate_position_in_range(y_center, self.config.allowable_y_range, "y")
-        if self.config.scan_samy:
-            self.qserver.move_samy(y_center, timeout=30.0)
+        axis = positioner_name.strip().lower()
+        # Absolute position the plan moves each axis to before scanning, with the
+        # range/unit used to validate it. ``center`` is a RELATIVE offset applied
+        # to the driven positioner from its position at scan time.
+        absolute_targets = {
+            "x": (sample_x, self.config.allowable_x_range, "um"),
+            "y": (sample_y, self.config.allowable_y_range, "um"),
+            "z": (sample_z, self.config.allowable_z_range, "um"),
+            "energy": (energy, self.config.allowable_energy_range, "keV"),
+        }
+        if axis not in absolute_targets:
+            raise ValueError(
+                "positioner_name must be one of 'x', 'y', 'z', or 'energy'."
+            )
+        # Validate every explicitly requested absolute sample/energy position.
+        # step1d_scanrecord moves to these (keeping the current position when None).
+        for name, (value, value_range, value_unit) in absolute_targets.items():
+            if value is not None:
+                validate_position_in_range(value, value_range, name, unit=value_unit)
+        # The scan sweeps ``center +/- length/2`` relative to the driven positioner.
+        # The absolute extent can only be bounded when that axis's target position
+        # is given; otherwise the current (unknown) position is used, so an absolute
+        # range check is not possible here.
+        scan_target, scan_range, scan_unit = absolute_targets[axis]
+        if scan_target is not None:
+            scan_center = scan_target + center
+            validate_position_in_range(
+                scan_center - length / 2, scan_range, axis, unit=scan_unit
+            )
+            validate_position_in_range(
+                scan_center + length / 2, scan_range, axis, unit=scan_unit
+            )
+        dwell = self.config.dwell_line_scan * 1000 if dwell_ms is None else dwell_ms
         request = {
             "samplename": self.config.sample_name,
+            "positioner_name": axis,
             "width": length,
-            "center": x_center,
+            "center": center,
             "stepsize_x": stepsize_x,
-            "dwell_ms": self.config.dwell_line_scan * 1000,
+            "dwell_ms": dwell,
             "xrf_on": self.config.xrf_on,
             "preamp1_on": self.config.preamp1_on,
         }
+        # Only forward sample/energy positions that were explicitly requested.
+        # step1d_scanrecord types these as ``float`` (not Optional), so sending an
+        # explicit None fails QueueServer plan validation; omitting them lets the
+        # plan fall back to the current position.
+        for key, value in (
+            ("sample_x", sample_x),
+            ("sample_y", sample_y),
+            ("sample_z", sample_z),
+            ("energy", energy),
+        ):
+            if value is not None:
+                request[key] = value
         self.line_scan_call_history.append(
             {
-                "step": stepsize_x,
-                "x_center": x_center,
-                "y_center": y_center,
+                "positioner_name": axis,
+                "center": center,
                 "length": length,
-                "angle": 0.0,
+                "step": stepsize_x,
+                "sample_x": sample_x,
+                "sample_y": sample_y,
+                "sample_z": sample_z,
+                "energy": energy,
             }
         )
-        execution = self.qserver.run_acquire_line_scan(request)
+        execution = self.qserver.run_acquire_line_scan(request, on_console=on_console)
         task_result = execution["task_result"]
         return json_safe(
             {
                 "plan_name": execution["plan_name"],
-                "task_uid": execution["task_uid"],
+                "item_uid": execution["item_uid"],
                 "run_uids": result_run_uids(task_result),
                 "scan_ids": result_scan_ids(task_result),
                 "save_data_path": self.qserver.get_save_data_path(timeout=10.0),
+                "raw_task_result": task_result,
+            }
+        )
+
+    def move_sample(self, axis: str, position: float) -> dict[str, Any]:
+        axis_name = axis.strip().lower()
+        allowable_ranges = {
+            "x": self.config.allowable_x_range,
+            "y": self.config.allowable_y_range,
+            "z": self.config.allowable_z_range,
+        }
+        if axis_name not in allowable_ranges:
+            raise ValueError("Axis must be one of 'x', 'y', or 'z'.")
+        position_value = float(position)
+        validate_position_in_range(position_value, allowable_ranges[axis_name], axis_name)
+        execution = self.qserver.move_sample(axis_name, position_value, timeout=30.0)
+        task_result = execution["task_result"]
+        return json_safe(
+            {
+                "axis": axis_name,
+                "position": position_value,
+                "readback": result_return_value(task_result),
+                "plan_name": execution["plan_name"],
+                "item_uid": execution["item_uid"],
+                "exit_status": task_result.get("exit_status"),
                 "raw_task_result": task_result,
             }
         )
@@ -200,4 +283,5 @@ class QServerAPSTwoIDDMICInstrument:
             raise ValueError("The 'parameters' list must contain at least one value.")
         value = float(parameters[0])
         validate_position_in_range(value, self.config.allowable_z_range, "z")
-        return self.qserver.set_zp_z(value, timeout=30.0)
+        execution = self.qserver.move_zp_z(value, timeout=30.0)
+        return result_return_value(execution["task_result"])
