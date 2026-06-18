@@ -28,34 +28,34 @@ The environment needs:
 
 It does not require the old local worker/ZMQ stack.
 
+## Configuration
+
+A repo-level [config.toml](/home/beams8/USER2IDD/software/control_suite_mcp_aps_2idd/config.toml:1)
+provides the default MCP server configuration, including:
+
+- host/port/path
+- allowable `x`, `y`, and `z` ranges
+- QueueServer addresses
+- approved QueueServer plan names for acquisition and motion
+
+CLI flags still override TOML values when needed.
+
 ## Run
 
-Start the MCP server and point it at QueueServer:
+Start the MCP server with the repo config:
 
 ```bash
-control-suite-aps-2idd-mcp \
-  --qserver-control-addr tcp://[hostname]:60615 \
-  --qserver-info-addr tcp://[hostname]:60625 \
-  --host 0.0.0.0 \
-  --port 8050 \
-  --path /mcp
+control-suite-aps-2idd-mcp --config config.toml
 ```
 
-If QueueServer is running on the same host as the MCP server, replace
-`[hostname]` with `127.0.0.1`.
+If QueueServer is running on the same host as the MCP server, keep the default
+`127.0.0.1` QueueServer addresses in `config.toml`. Otherwise, update the
+`[qserver]` section.
 
-If line scans need sample-y motion or `set_parameters()` needs zp-z motion,
-also configure approved QueueServer helper functions:
+You can still override specific values from the command line, for example:
 
 ```bash
-control-suite-aps-2idd-mcp \
-  --qserver-control-addr tcp://[hostname]:60615 \
-  --qserver-info-addr tcp://[hostname]:60625 \
-  --qserver-move-samy-function YOUR_MOVE_SAMY_FUNCTION \
-  --qserver-set-zp-z-function YOUR_SET_ZP_Z_FUNCTION \
-  --host 0.0.0.0 \
-  --port 8050 \
-  --path /mcp
+control-suite-aps-2idd-mcp   --config config.toml   --qserver-control-addr tcp://[hostname]:60615   --qserver-info-addr tcp://[hostname]:60625   --allowable-x-range 0,50   --allowable-y-range 0,50
 ```
 
 ## MCP URL
@@ -70,9 +70,10 @@ http://127.0.0.1:8050/mcp
 
 - `health()`
 - `get_state()`
-- `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y)`
+- `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
 - `dump_array(buffer_name)`
-- `acquire_line_scan(length, x_center, y_center, stepsize_x)`
+- `acquire_line_scan(positioner_name, length, center, stepsize_x, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
+- `move_sample(axis, position)`
 - `set_parameters(parameters)`
 - `get_attribute_payload(name)`
 
@@ -98,5 +99,29 @@ For an HTTP MCP client:
 
 - Scan dimensions, positions, and step sizes are in microns unless noted otherwise.
 - `set_parameters(parameters)` uses `parameters[0]` as the APS 2-ID-D zp-z target.
-- Acquisition results report QueueServer task metadata such as `task_uid`,
-  `run_uids`, `scan_ids`, and `save_data_path`.
+- Motion and acquisition tools are QueueServer *plans*, submitted with
+  `item_execute`. Plans return an `item_uid` (not a `task_uid`); the service
+  waits for the RE manager to return to idle and reads the outcome from
+  QueueServer history. `task_uid` is only produced by QueueServer *functions*
+  (e.g. `get_save_data_path`).
+- `acquire_image` and `acquire_line_scan` stream live scan progress as MCP
+  progress notifications, sourced from the QueueServer console (ZMQ info)
+  output. Their results report `item_uid`, `run_uids`, `scan_ids`, and
+  `save_data_path`.
+- `acquire_line_scan` drives the axis named by `positioner_name`
+  (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize_x` are in that
+  positioner's units (microns for x/y/z, keV for energy). **`center` is a
+  relative offset** from the positioner's position at scan time (e.g. `center=0`
+  scans symmetrically around the current position). The `step1d_scanrecord` plan
+  moves the sample/energy to the optional `sample_x`/`sample_y`/`sample_z`/
+  `energy` positions (current position is kept for any left unset) before
+  scanning.
+- Dwell time per point: pass `dwell_ms` to override per call; when omitted the
+  acquisition uses the configured `dwell_imaging` (images) or `dwell_line_scan`
+  (line scans) value.
+- Range validation: any explicitly provided absolute position
+  (`sample_x`/`sample_y`/`sample_z`/`energy`) is validated against its axis range
+  (`allowable_x/y/z_range` in microns, `allowable_energy_range` in keV). The
+  relative scan extent (`target + center ± length/2`) is only validated when the
+  driven axis's absolute target is supplied; with no target the current position
+  is unknown, so the absolute extent cannot be checked.
