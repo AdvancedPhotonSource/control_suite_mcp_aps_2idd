@@ -31,6 +31,7 @@ class QServerAPSTwoIDDMICInstrument:
         "allowable_x_range",
         "allowable_y_range",
         "allowable_z_range",
+        "allowable_zp_range",
         "allowable_energy_range",
         "plot_image_in_log_scale",
         "show_colorbar_in_image",
@@ -76,6 +77,7 @@ class QServerAPSTwoIDDMICInstrument:
                     allowable_x_range=self.config.allowable_x_range,
                     allowable_y_range=self.config.allowable_y_range,
                     allowable_z_range=self.config.allowable_z_range,
+                    allowable_zp_range=self.config.allowable_zp_range,
                     allowable_energy_range=self.config.allowable_energy_range,
                 ),
             }
@@ -164,8 +166,8 @@ class QServerAPSTwoIDDMICInstrument:
         self,
         positioner_name: str,
         length: float,
-        center: float,
-        stepsize_x: float,
+        stepsize: float,
+        center: float = 0.0,
         sample_x: float | None = None,
         sample_y: float | None = None,
         sample_z: float | None = None,
@@ -211,7 +213,7 @@ class QServerAPSTwoIDDMICInstrument:
             "positioner_name": axis,
             "width": length,
             "center": center,
-            "stepsize_x": stepsize_x,
+            "stepsize_x": stepsize,
             "dwell_ms": dwell,
             "xrf_on": self.config.xrf_on,
             "preamp1_on": self.config.preamp1_on,
@@ -233,7 +235,7 @@ class QServerAPSTwoIDDMICInstrument:
                 "positioner_name": axis,
                 "center": center,
                 "length": length,
-                "step": stepsize_x,
+                "step": stepsize,
                 "sample_x": sample_x,
                 "sample_y": sample_y,
                 "sample_z": sample_z,
@@ -278,10 +280,26 @@ class QServerAPSTwoIDDMICInstrument:
             }
         )
 
+    def move_zp_z(self, position: float) -> dict[str, Any]:
+        # zp-z (zone-plate z) has its own travel limits, distinct from the
+        # sample z motor's allowable_z_range.
+        value = float(position)
+        validate_position_in_range(value, self.config.allowable_zp_range, "zp-z")
+        execution = self.qserver.move_zp_z(value, timeout=30.0)
+        task_result = execution["task_result"]
+        return json_safe(
+            {
+                "position": value,
+                "readback": result_return_value(task_result),
+                "plan_name": execution["plan_name"],
+                "item_uid": execution["item_uid"],
+                "exit_status": task_result.get("exit_status"),
+                "raw_task_result": task_result,
+            }
+        )
+
     def set_parameters(self, parameters: list[float]) -> Any:
         if not parameters:
             raise ValueError("The 'parameters' list must contain at least one value.")
-        value = float(parameters[0])
-        validate_position_in_range(value, self.config.allowable_z_range, "z")
-        execution = self.qserver.move_zp_z(value, timeout=30.0)
-        return result_return_value(execution["task_result"])
+        result = self.move_zp_z(parameters[0])
+        return result_return_value(result["raw_task_result"])

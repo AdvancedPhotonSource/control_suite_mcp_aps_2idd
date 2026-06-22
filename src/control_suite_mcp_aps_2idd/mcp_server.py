@@ -60,6 +60,7 @@ def load_config_file(path: str | Path, *, required: bool = False) -> dict[str, A
         "allowable_x_range": _stringify_range(data.get("allowable_x_range")),
         "allowable_y_range": _stringify_range(data.get("allowable_y_range")),
         "allowable_z_range": _stringify_range(data.get("allowable_z_range")),
+        "allowable_zp_range": _stringify_range(data.get("allowable_zp_range")),
         "allowable_energy_range": _stringify_range(data.get("allowable_energy_range")),
         "plot_image_in_log_scale": bool(data.get("plot_image_in_log_scale", False)),
         "show_colorbar_in_image": bool(data.get("show_colorbar_in_image", False)),
@@ -94,6 +95,7 @@ def build_service_config(args: argparse.Namespace) -> APSTwoIDDConfig:
         allowable_x_range=parse_range(args.allowable_x_range),
         allowable_y_range=parse_range(args.allowable_y_range),
         allowable_z_range=parse_range(args.allowable_z_range),
+        allowable_zp_range=parse_range(args.allowable_zp_range),
         allowable_energy_range=parse_range(args.allowable_energy_range),
         plot_image_in_log_scale=args.plot_image_in_log_scale,
         show_colorbar_in_image=args.show_colorbar_in_image,
@@ -266,6 +268,7 @@ def create_mcp(
         adapter can preserve array semantics without importing EAA here.
         """
         return await call_backend("get_attribute_payload", {"name": name})
+        
 
     @mcp.tool()
     async def acquire_line_scan(
@@ -277,15 +280,16 @@ def create_mcp(
             float,
             "Total scan width along the positioner (microns for x/y/z, keV for energy).",
         ],
-        center: Annotated[
-            float,
-            "Scan center along the positioner (microns for x/y/z, keV for energy).",
-        ],
-        stepsize_x: Annotated[
+        stepsize: Annotated[
             float,
             "Step size along the positioner (microns for x/y/z, keV for energy).",
         ],
         ctx: Context,
+        center: Annotated[
+            float,
+            "Scan center as a RELATIVE offset along the positioner (microns for "
+            "x/y/z, keV for energy); defaults to 0 (scan around current position).",
+        ] = 0.0,
         sample_x: Annotated[
             float | None,
             "Sample x position in microns; current position is kept if omitted.",
@@ -310,13 +314,24 @@ def create_mcp(
     ) -> dict[str, Any]:
         """Acquire a 1D line scan by driving the chosen positioner through QueueServer.
 
-        ``positioner_name`` selects which axis is scanned ('x', 'y', 'z', or
-        'energy'); ``length``, ``center``, and ``stepsize_x`` are expressed in
-        that positioner's units (microns for x/y/z, keV for energy). The
-        QueueServer ``step1d_scanrecord`` plan moves the sample/energy to the
-        requested ``sample_x``/``sample_y``/``sample_z``/``energy`` positions
-        (keeping the current position for any left unset) before scanning.
+        This tool allows you to perform 3 types of operations:
+        - Lateral spatial line scan in the x/y plane of the sample
+        - Sample z scan along the beam direction (depth scan)
+        - Energy scan by tuning the monochromator energy
 
+        To acquire a horizontal spatial line scan, set ``positioner_name``
+        to ``x``; for vertical, set it to ``y``. For lateral scans,
+        ``sample_x``, ``sample_y`` set the center position of the line scan.
+        Do not set ``sample_z`` so that you don't accidentally move the sample
+        out of focus.
+
+        To acquire a depth scan, set ``positioner_name`` to ``z``.
+
+        For energy scan, set ``positioner_name`` to ``energy``.
+        
+        ``length``, ``center``, and ``stepsize`` are expressed in
+        that positioner's units (microns for x/y/z, keV for energy). 
+        
         Live scan progress is streamed as MCP progress notifications from the
         QueueServer console (ZMQ) output. The result contains QueueServer
         metadata such as ``item_uid``, ``run_uids``, ``scan_ids``, and
@@ -328,7 +343,7 @@ def create_mcp(
                 "positioner_name": positioner_name,
                 "length": length,
                 "center": center,
-                "stepsize_x": stepsize_x,
+                "stepsize": stepsize,
                 "sample_x": sample_x,
                 "sample_y": sample_y,
                 "sample_z": sample_z,
@@ -347,6 +362,18 @@ def create_mcp(
         return await call_backend("move_sample", {"axis": axis, "position": position})
 
     @mcp.tool()
+    async def move_zp_z(
+        position: Annotated[float, "Zone-plate z (zp-z) target position in microns."],
+    ) -> dict[str, Any]:
+        """Move the zone-plate z (zp-z) positioner through an allowlisted QueueServer plan.
+
+        zp-z is distinct from the sample z motor; the target is validated against
+        ``allowable_zp_range``. The result contains QueueServer metadata such as
+        ``item_uid`` and ``exit_status``.
+        """
+        return await call_backend("move_zp_z", {"position": position})
+
+    @mcp.tool()
     async def set_parameters(
         parameters: Annotated[
             list[float],
@@ -356,7 +383,8 @@ def create_mcp(
         """Move beamline tuning parameters.
 
         For APS 2-ID-D ``parameters[0]`` is the zone-plate z position and
-        invokes motor motion after worker-side range validation.
+        invokes motor motion after worker-side range validation. Equivalent to
+        ``move_zp_z(parameters[0])``.
         """
         return await call_backend("set_parameters", {"parameters": parameters})
 
@@ -384,6 +412,7 @@ def build_parser(
         "allowable_x_range": None,
         "allowable_y_range": None,
         "allowable_z_range": None,
+        "allowable_zp_range": None,
         "allowable_energy_range": None,
         "plot_image_in_log_scale": False,
         "show_colorbar_in_image": False,
@@ -421,6 +450,7 @@ def build_parser(
     parser.add_argument("--allowable-x-range", default=defaults["allowable_x_range"], help="Comma-separated lower,upper.")
     parser.add_argument("--allowable-y-range", default=defaults["allowable_y_range"], help="Comma-separated lower,upper.")
     parser.add_argument("--allowable-z-range", default=defaults["allowable_z_range"], help="Comma-separated lower,upper.")
+    parser.add_argument("--allowable-zp-range", default=defaults["allowable_zp_range"], help="Comma-separated lower,upper (zp-z).")
     parser.add_argument("--allowable-energy-range", default=defaults["allowable_energy_range"], help="Comma-separated lower,upper (keV).")
     parser.add_argument("--plot-image-in-log-scale", action="store_true", default=defaults["plot_image_in_log_scale"])
     parser.add_argument("--show-colorbar-in-image", action="store_true", default=defaults["show_colorbar_in_image"])

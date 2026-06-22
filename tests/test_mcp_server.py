@@ -41,6 +41,9 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         def move_sample(self, axis: str, position: float) -> dict[str, object]:
             return {"axis": axis, "position": position}
 
+        def move_zp_z(self, position: float) -> dict[str, object]:
+            return {"position": position}
+
         def set_parameters(self, parameters: list[float]) -> list[float]:
             return parameters
 
@@ -56,6 +59,7 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         "get_attribute_payload",
         "acquire_line_scan",
         "move_sample",
+        "move_zp_z",
         "set_parameters",
     }
 

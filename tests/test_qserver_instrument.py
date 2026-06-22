@@ -102,13 +102,45 @@ def test_set_parameters_uses_move_zp_z_plan(monkeypatch: pytest.MonkeyPatch) -> 
     dummy = DummyQServer()
     monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
     instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument(
-        APSTwoIDDConfig(allowable_z_range=(0.0, 10.0))
+        APSTwoIDDConfig(allowable_zp_range=(0.0, 10.0))
     )
 
     result = instrument.set_parameters([6.25])
 
     assert dummy.move_zp_z_calls == [(6.25, 30.0)]
     assert result == 6.25
+
+
+def test_move_zp_z_delegates_and_reports_item_uid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument(
+        APSTwoIDDConfig(allowable_zp_range=(-2000.0, 2000.0))
+    )
+
+    result = instrument.move_zp_z(150.0)
+
+    assert dummy.move_zp_z_calls == [(150.0, 30.0)]
+    assert result["position"] == 150.0
+    assert result["item_uid"] == "item-2"
+    assert result["plan_name"] == "move_zp_z"
+
+
+def test_move_zp_z_validates_against_zp_range_not_z_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    # A wide sample-z range must NOT permit a zp-z move outside the zp range.
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument(
+        APSTwoIDDConfig(allowable_z_range=(-5000.0, 5000.0), allowable_zp_range=(-10.0, 10.0))
+    )
+
+    with pytest.raises(ValueError, match="zp-z direction"):
+        instrument.move_zp_z(50.0)
+    assert dummy.move_zp_z_calls == []
 
 
 def test_acquire_image_streams_console_and_reports_item_uid(
@@ -158,7 +190,7 @@ def test_acquire_line_scan_streams_console_and_passes_positioner(
         positioner_name="x",
         length=10.0,
         center=5.0,
-        stepsize_x=1.0,
+        stepsize=1.0,
         sample_y=-340.0,
         on_console=messages.append,
     )
@@ -181,6 +213,22 @@ def test_acquire_line_scan_streams_console_and_passes_positioner(
     assert dummy.move_sample_calls == []
 
 
+def test_acquire_line_scan_center_defaults_to_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument(
+        APSTwoIDDConfig(allowable_x_range=(0.0, 100.0))
+    )
+
+    # Omitting center scans symmetrically around the current position (center=0).
+    instrument.acquire_line_scan(positioner_name="x", length=10.0, stepsize=1.0)
+
+    sent_request, _timeout = dummy.acquire_line_scan_calls[0]
+    assert sent_request["center"] == 0.0
+
+
 def test_acquire_line_scan_dwell_ms_overrides_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -191,14 +239,14 @@ def test_acquire_line_scan_dwell_ms_overrides_config(
     )
 
     instrument.acquire_line_scan(
-        positioner_name="x", length=5.0, center=0.0, stepsize_x=1.0, dwell_ms=100.0
+        positioner_name="x", length=5.0, center=0.0, stepsize=1.0, dwell_ms=100.0
     )
     overridden, _ = dummy.acquire_line_scan_calls[0]
     assert overridden["dwell_ms"] == 100.0
 
     # Omitting dwell_ms falls back to the configured dwell_line_scan (0.2 s).
     instrument.acquire_line_scan(
-        positioner_name="x", length=5.0, center=0.0, stepsize_x=1.0
+        positioner_name="x", length=5.0, center=0.0, stepsize=1.0
     )
     default, _ = dummy.acquire_line_scan_calls[1]
     assert default["dwell_ms"] == 200.0
@@ -220,7 +268,7 @@ def test_acquire_line_scan_validates_energy_extent_when_target_given(
             positioner_name="energy",
             length=4.0,
             center=0.0,
-            stepsize_x=0.5,
+            stepsize=0.5,
             energy=6.0,
         )
 
@@ -240,7 +288,7 @@ def test_acquire_line_scan_validates_absolute_target(
             positioner_name="x",
             length=10.0,
             center=0.0,
-            stepsize_x=1.0,
+            stepsize=1.0,
             sample_y=-600.0,
         )
 
@@ -260,7 +308,7 @@ def test_acquire_line_scan_relative_center_skips_absolute_extent_check(
         positioner_name="x",
         length=10.0,
         center=5000.0,
-        stepsize_x=1.0,
+        stepsize=1.0,
     )
 
     assert result["item_uid"] == "item-line"
@@ -278,5 +326,5 @@ def test_acquire_line_scan_rejects_unknown_positioner(
             positioner_name="theta",
             length=10.0,
             center=0.0,
-            stepsize_x=1.0,
+            stepsize=1.0,
         )

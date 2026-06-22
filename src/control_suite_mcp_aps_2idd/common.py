@@ -71,6 +71,7 @@ class APSTwoIDDConfig:
     allowable_x_range: tuple[float, float] | None = None
     allowable_y_range: tuple[float, float] | None = None
     allowable_z_range: tuple[float, float] | None = None
+    allowable_zp_range: tuple[float, float] | None = None
     allowable_energy_range: tuple[float, float] | None = None
     plot_image_in_log_scale: bool = False
     show_colorbar_in_image: bool = False

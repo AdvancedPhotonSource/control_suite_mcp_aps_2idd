@@ -72,8 +72,9 @@ http://127.0.0.1:8050/mcp
 - `get_state()`
 - `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
 - `dump_array(buffer_name)`
-- `acquire_line_scan(positioner_name, length, center, stepsize_x, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
+- `acquire_line_scan(positioner_name, length, stepsize, center=0, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
 - `move_sample(axis, position)`
+- `move_zp_z(position)`
 - `set_parameters(parameters)`
 - `get_attribute_payload(name)`
 
@@ -98,7 +99,10 @@ For an HTTP MCP client:
 ## Tool Contract Notes
 
 - Scan dimensions, positions, and step sizes are in microns unless noted otherwise.
-- `set_parameters(parameters)` uses `parameters[0]` as the APS 2-ID-D zp-z target.
+- `move_zp_z(position)` drives the zone-plate z positioner, validated against
+  `allowable_zp_range` (distinct from the sample z motor's `allowable_z_range`).
+  `set_parameters(parameters)` is equivalent, using `parameters[0]` as the zp-z
+  target (also validated against `allowable_zp_range`).
 - Motion and acquisition tools are QueueServer *plans*, submitted with
   `item_execute`. Plans return an `item_uid` (not a `task_uid`); the service
   waits for the RE manager to return to idle and reads the outcome from
@@ -109,7 +113,7 @@ For an HTTP MCP client:
   output. Their results report `item_uid`, `run_uids`, `scan_ids`, and
   `save_data_path`.
 - `acquire_line_scan` drives the axis named by `positioner_name`
-  (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize_x` are in that
+  (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a
   relative offset** from the positioner's position at scan time (e.g. `center=0`
   scans symmetrically around the current position). The `step1d_scanrecord` plan
