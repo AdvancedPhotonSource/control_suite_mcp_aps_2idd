@@ -424,6 +424,7 @@ def normalize_allowable_ranges(
     allowable_x_range: tuple[float, float] | None,
     allowable_y_range: tuple[float, float] | None,
     allowable_z_range: tuple[float, float] | None,
+    allowable_zp_range: tuple[float, float] | None = None,
     allowable_energy_range: tuple[float, float] | None = None,
 ) -> dict[str, tuple[float, float] | None]:
     """Normalize allowed position ranges for state reporting."""
@@ -431,6 +432,7 @@ def normalize_allowable_ranges(
         "allowable_x_range": _optional_float_pair(allowable_x_range),
         "allowable_y_range": _optional_float_pair(allowable_y_range),
         "allowable_z_range": _optional_float_pair(allowable_z_range),
+        "allowable_zp_range": _optional_float_pair(allowable_zp_range),
         "allowable_energy_range": _optional_float_pair(allowable_energy_range),
     }
 
