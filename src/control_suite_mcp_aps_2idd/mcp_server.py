@@ -78,6 +78,7 @@ def load_config_file(path: str | Path, *, required: bool = False) -> dict[str, A
         "qserver_move_sample_plan": qserver.get("move_sample"),
         "qserver_move_zp_z_plan": qserver.get("move_zp_z"),
         "qserver_get_save_data_path_function": qserver.get("get_save_data_path", "get_save_data_path"),
+        "qserver_get_current_mda_file_function": qserver.get("get_current_mda_file", "get_current_mda_file"),
     }
 
 
@@ -120,6 +121,7 @@ def build_qserver_connection_config(args: argparse.Namespace) -> QServerConnecti
             move_sample=args.qserver_move_sample_plan,
             move_zp_z=args.qserver_move_zp_z_plan,
             get_save_data_path=args.qserver_get_save_data_path_function,
+            get_current_mda_file=args.qserver_get_current_mda_file_function,
         ),
     )
 
@@ -192,6 +194,26 @@ def create_mcp(
         """Return APS 2-ID-D service and QueueServer state."""
         return await call_backend("get_state")
 
+    @mcp.tool()
+    async def get_current_mda_file() -> dict[str, Any]:
+        """Return the current/next MDA file name from QueueServer.
+
+        Runs the allowlisted ``get_current_mda_file`` QueueServer helper
+        function. The result contains ``current_mda_file`` (the savedata
+        ``next_file_name``), or null when the savedata device is unavailable.
+        """
+        return await call_backend("get_current_mda_file")
+
+    @mcp.tool()
+    async def get_save_data_path() -> dict[str, Any]:
+        """Return the current save data path from QueueServer.
+
+        Runs the allowlisted ``get_save_data_path`` QueueServer helper
+        function. The result contains ``save_data_path`` (the savedata
+        auto-storage path), or null when the savedata device is unavailable.
+        """
+        return await call_backend("get_save_data_path")
+
     async def set_config(
         name: Annotated[str, "Writable configuration attribute name."],
         value: Annotated[Any, "JSON-serializable value to assign."],
@@ -232,7 +254,8 @@ def create_mcp(
         The beamline moves during the scan through QueueServer. Live scan
         progress is streamed as MCP progress notifications from the QueueServer
         console (ZMQ) output. The result contains QueueServer metadata such as
-        ``item_uid``, ``run_uids``, ``scan_ids``, and ``save_data_path``.
+        ``item_uid``, ``run_uids``, ``scan_ids``, ``save_data_path``, and
+        ``current_mda_file`` (the MDA file this scan wrote).
         """
         return await run_acquisition_with_progress(
             "acquire_image",
@@ -334,8 +357,9 @@ def create_mcp(
         
         Live scan progress is streamed as MCP progress notifications from the
         QueueServer console (ZMQ) output. The result contains QueueServer
-        metadata such as ``item_uid``, ``run_uids``, ``scan_ids``, and
-        ``save_data_path``.
+        metadata such as ``item_uid``, ``run_uids``, ``scan_ids``,
+        ``save_data_path``, and ``current_mda_file`` (the MDA file this
+        scan wrote).
         """
         return await run_acquisition_with_progress(
             "acquire_line_scan",
@@ -430,6 +454,7 @@ def build_parser(
         "qserver_move_sample_plan": None,
         "qserver_move_zp_z_plan": None,
         "qserver_get_save_data_path_function": "get_save_data_path",
+        "qserver_get_current_mda_file_function": "get_current_mda_file",
     }
     if config_defaults:
         defaults.update(dict(config_defaults))
@@ -467,6 +492,7 @@ def build_parser(
     parser.add_argument("--qserver-acquire-line-scan-plan", default=defaults["qserver_acquire_line_scan_plan"])
     parser.add_argument("--qserver-move-sample-plan", default=defaults["qserver_move_sample_plan"])
     parser.add_argument("--qserver-get-save-data-path-function", default=defaults["qserver_get_save_data_path_function"])
+    parser.add_argument("--qserver-get-current-mda-file-function", default=defaults["qserver_get_current_mda_file_function"])
     parser.add_argument("--qserver-move-zp-z-plan", default=defaults["qserver_move_zp_z_plan"])
     return parser
 

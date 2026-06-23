@@ -70,6 +70,8 @@ http://127.0.0.1:8050/mcp
 
 - `health()`
 - `get_state()`
+- `get_current_mda_file()`
+- `get_save_data_path()`
 - `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
 - `dump_array(buffer_name)`
 - `acquire_line_scan(positioner_name, length, stepsize, center=0, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
@@ -110,8 +112,10 @@ For an HTTP MCP client:
   (e.g. `get_save_data_path`).
 - `acquire_image` and `acquire_line_scan` stream live scan progress as MCP
   progress notifications, sourced from the QueueServer console (ZMQ info)
-  output. Their results report `item_uid`, `run_uids`, `scan_ids`, and
-  `save_data_path`.
+  output. Their results report `item_uid`, `run_uids`, `scan_ids`,
+  `save_data_path`, and `current_mda_file`. `current_mda_file` is captured
+  *before* the plan runs (the savedata `next_file_name` auto-increments once
+  the scan starts), so it names the MDA file that scan actually wrote.
 - `acquire_line_scan` drives the axis named by `positioner_name`
   (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a

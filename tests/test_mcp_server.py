@@ -20,6 +20,12 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         def get_state(self) -> dict[str, str]:
             return {"mode": "test"}
 
+        def get_current_mda_file(self) -> dict[str, object]:
+            return {"current_mda_file": "test.mda"}
+
+        def get_save_data_path(self) -> dict[str, object]:
+            return {"save_data_path": "/tmp/test"}
+
         def set_config(self, name: str, value: object) -> dict[str, object]:
             return {"name": name, "value": value}
 
@@ -54,6 +60,8 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
     assert tool_names == {
         "health",
         "get_state",
+        "get_current_mda_file",
+        "get_save_data_path",
         "acquire_image",
         "dump_array",
         "get_attribute_payload",
