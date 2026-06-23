@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from control_suite_mcp_aps_2idd.common import APSTwoIDDConfig, json_safe, validate_position_in_range
+from control_suite_mcp_aps_2idd.acquisition_processing import APSMICPostProcessor
+from control_suite_mcp_aps_2idd.common import (
+    APSTwoIDDConfig,
+    json_safe,
+    validate_position_in_range,
+)
 from control_suite_mcp_aps_2idd.qserver_client import (
     QServerConnectionConfig,
     RestrictedQServerClient,
@@ -49,6 +54,7 @@ class QServerAPSTwoIDDMICInstrument:
         self.qserver = RestrictedQServerClient(
             QServerConnectionConfig.from_env() if qserver_config is None else qserver_config
         )
+        self.postprocessor = APSMICPostProcessor()
         self.image_acquisition_call_history: list[dict[str, Any]] = []
         self.line_scan_call_history: list[dict[str, Any]] = []
 
@@ -161,14 +167,24 @@ class QServerAPSTwoIDDMICInstrument:
         current_mda_file = self.qserver.get_current_mda_file(timeout=10.0)
         execution = self.qserver.run_acquire_image(request, on_console=on_console)
         task_result = execution["task_result"]
+        save_data_path = self.qserver.get_save_data_path(timeout=10.0)
+        postprocessed = self.postprocessor.process_image(
+            save_data_path=save_data_path,
+            current_mda_file=current_mda_file,
+            channels=self.config.xrf_elms,
+            using_xrf_maps=self.config.using_xrf_maps,
+            plot_in_log_scale=self.config.plot_image_in_log_scale,
+            show_colorbar=self.config.show_colorbar_in_image,
+        )
         return json_safe(
             {
                 "plan_name": execution["plan_name"],
                 "item_uid": execution["item_uid"],
                 "run_uids": result_run_uids(task_result),
                 "scan_ids": result_scan_ids(task_result),
-                "save_data_path": self.qserver.get_save_data_path(timeout=10.0),
+                "save_data_path": save_data_path,
                 "current_mda_file": current_mda_file,
+                **postprocessed,
                 "raw_task_result": task_result,
             }
         )
@@ -261,14 +277,24 @@ class QServerAPSTwoIDDMICInstrument:
         current_mda_file = self.qserver.get_current_mda_file(timeout=10.0)
         execution = self.qserver.run_acquire_line_scan(request, on_console=on_console)
         task_result = execution["task_result"]
+        save_data_path = self.qserver.get_save_data_path(timeout=10.0)
+        postprocessed = self.postprocessor.process_line_scan(
+            save_data_path=save_data_path,
+            current_mda_file=current_mda_file,
+            channels=self.config.xrf_elms,
+            roi_num=self.config.xrf_roi_num,
+            using_xrf_maps=self.config.using_xrf_maps,
+            scan_samy=self.config.scan_samy,
+        )
         return json_safe(
             {
                 "plan_name": execution["plan_name"],
                 "item_uid": execution["item_uid"],
                 "run_uids": result_run_uids(task_result),
                 "scan_ids": result_scan_ids(task_result),
-                "save_data_path": self.qserver.get_save_data_path(timeout=10.0),
+                "save_data_path": save_data_path,
                 "current_mda_file": current_mda_file,
+                **postprocessed,
                 "raw_task_result": task_result,
             }
         )

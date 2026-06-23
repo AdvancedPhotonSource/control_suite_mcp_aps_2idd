@@ -76,6 +76,35 @@ class DummyQServer:
         return "2idd_0001.mda"
 
 
+class DummyPostProcessor:
+    def process_image(self, **kwargs) -> dict[str, object]:
+        return {
+            "img_path": "/tmp/2idd_0001.mda_Cr.png",
+            "raw_data_path": "/tmp/2idd_0001.mda_Cr.npy",
+        }
+
+    def process_line_scan(self, **kwargs) -> dict[str, object]:
+        return {
+            "img_path": "/tmp/2idd_0001.mda_Cr_line.png",
+            "raw_data_path": "/tmp/2idd_0001.mda_Cr_line.npy",
+            "gaussian_fit_params": {
+                "fwhm": 1.25,
+                "a": 10.0,
+                "mu": 5.0,
+                "sigma": 0.5,
+                "c": 1.0,
+                "normalized_residual": 0.01,
+                "x_min": 0.0,
+                "x_max": 10.0,
+            },
+        }
+
+
+@pytest.fixture(autouse=True)
+def fake_postprocessor(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(qserver_instrument, "APSMICPostProcessor", DummyPostProcessor)
+
+
 def test_move_sample_delegates_to_qserver(monkeypatch: pytest.MonkeyPatch) -> None:
     dummy = DummyQServer()
     monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
@@ -174,6 +203,8 @@ def test_acquire_image_streams_console_and_reports_item_uid(
     assert result["run_uids"] == ["run-img"]
     assert result["scan_ids"] == [42]
     assert result["save_data_path"] == "/data/smp1"
+    assert result["img_path"] == "/tmp/2idd_0001.mda_Cr.png"
+    assert result["raw_data_path"] == "/tmp/2idd_0001.mda_Cr.npy"
 
 
 def test_acquire_line_scan_streams_console_and_passes_positioner(
@@ -202,6 +233,9 @@ def test_acquire_line_scan_streams_console_and_passes_positioner(
     assert result["item_uid"] == "item-line"
     assert result["run_uids"] == ["run-line"]
     assert result["scan_ids"] == [43]
+    assert result["img_path"] == "/tmp/2idd_0001.mda_Cr_line.png"
+    assert result["raw_data_path"] == "/tmp/2idd_0001.mda_Cr_line.npy"
+    assert result["gaussian_fit_params"]["fwhm"] == 1.25
     # The new step1d_scanrecord request carries the positioner and sample moves;
     # the legacy separate move_sample-y step is gone.
     sent_request, _timeout = dummy.acquire_line_scan_calls[0]

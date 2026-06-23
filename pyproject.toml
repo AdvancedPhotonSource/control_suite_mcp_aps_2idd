@@ -7,6 +7,10 @@ requires-python = ">=3.11"
 dependencies = [
     "bluesky-queueserver-api",
     "fastmcp>=2.0",
+    "h5py",
+    "matplotlib",
+    "numpy",
+    "scipy",
 ]
 
 [project.scripts]

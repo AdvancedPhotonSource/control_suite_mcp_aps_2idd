@@ -255,7 +255,9 @@ def create_mcp(
         progress is streamed as MCP progress notifications from the QueueServer
         console (ZMQ) output. The result contains QueueServer metadata such as
         ``item_uid``, ``run_uids``, ``scan_ids``, ``save_data_path``, and
-        ``current_mda_file`` (the MDA file this scan wrote).
+        ``current_mda_file`` (the MDA file this scan wrote), plus ``img_path``
+        for the rendered PNG and ``raw_data_path`` for the saved 2D ``.npy``
+        array. Artifact paths are absolute.
         """
         return await run_acquisition_with_progress(
             "acquire_image",
@@ -359,7 +361,11 @@ def create_mcp(
         QueueServer console (ZMQ) output. The result contains QueueServer
         metadata such as ``item_uid``, ``run_uids``, ``scan_ids``,
         ``save_data_path``, and ``current_mda_file`` (the MDA file this
-        scan wrote).
+        scan wrote), plus ``img_path`` for the rendered PNG plot,
+        ``raw_data_path`` for the saved line-profile ``.npy`` array, and
+        ``gaussian_fit_params`` containing ``fwhm``, ``a``, ``mu``,
+        ``sigma``, ``c``, ``normalized_residual``, ``x_min``, and ``x_max``.
+        Artifact paths are absolute.
         """
         return await run_acquisition_with_progress(
             "acquire_line_scan",

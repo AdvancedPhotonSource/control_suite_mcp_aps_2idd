@@ -116,6 +116,13 @@ For an HTTP MCP client:
   `save_data_path`, and `current_mda_file`. `current_mda_file` is captured
   *before* the plan runs (the savedata `next_file_name` auto-increments once
   the scan starts), so it names the MDA file that scan actually wrote.
+- After the scan, acquisition tools process the MDA/HDF5 output and write
+  file artifacts. `acquire_image` returns absolute `img_path` and
+  `raw_data_path` fields for the rendered PNG and 2D `.npy` array.
+  `acquire_line_scan` returns absolute `img_path` and `raw_data_path` fields
+  for the plotted line profile and `.npy` profile data, plus
+  `gaussian_fit_params` with `fwhm`, `a`, `mu`, `sigma`, `c`,
+  `normalized_residual`, `x_min`, and `x_max`.
 - `acquire_line_scan` drives the axis named by `positioner_name`
   (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a
