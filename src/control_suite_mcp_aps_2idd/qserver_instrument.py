@@ -55,6 +55,16 @@ class QServerAPSTwoIDDMICInstrument:
     def health(self) -> dict[str, Any]:
         return self.qserver.health()
 
+    def get_current_mda_file(self) -> dict[str, Any]:
+        return json_safe(
+            {"current_mda_file": self.qserver.get_current_mda_file(timeout=10.0)}
+        )
+
+    def get_save_data_path(self) -> dict[str, Any]:
+        return json_safe(
+            {"save_data_path": self.qserver.get_save_data_path(timeout=10.0)}
+        )
+
     def get_state(self) -> dict[str, Any]:
         return json_safe(
             {
@@ -146,6 +156,9 @@ class QServerAPSTwoIDDMICInstrument:
                 "psize_y": stepsize_y,
             }
         )
+        # Captured before the scan: next_file_name auto-increments once the plan
+        # runs, so reading it here yields the file this scan actually writes.
+        current_mda_file = self.qserver.get_current_mda_file(timeout=10.0)
         execution = self.qserver.run_acquire_image(request, on_console=on_console)
         task_result = execution["task_result"]
         return json_safe(
@@ -155,6 +168,7 @@ class QServerAPSTwoIDDMICInstrument:
                 "run_uids": result_run_uids(task_result),
                 "scan_ids": result_scan_ids(task_result),
                 "save_data_path": self.qserver.get_save_data_path(timeout=10.0),
+                "current_mda_file": current_mda_file,
                 "raw_task_result": task_result,
             }
         )
@@ -242,6 +256,9 @@ class QServerAPSTwoIDDMICInstrument:
                 "energy": energy,
             }
         )
+        # Captured before the scan: next_file_name auto-increments once the plan
+        # runs, so reading it here yields the file this scan actually writes.
+        current_mda_file = self.qserver.get_current_mda_file(timeout=10.0)
         execution = self.qserver.run_acquire_line_scan(request, on_console=on_console)
         task_result = execution["task_result"]
         return json_safe(
@@ -251,6 +268,7 @@ class QServerAPSTwoIDDMICInstrument:
                 "run_uids": result_run_uids(task_result),
                 "scan_ids": result_scan_ids(task_result),
                 "save_data_path": self.qserver.get_save_data_path(timeout=10.0),
+                "current_mda_file": current_mda_file,
                 "raw_task_result": task_result,
             }
         )

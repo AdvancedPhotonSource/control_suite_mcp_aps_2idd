@@ -72,6 +72,9 @@ class DummyQServer:
     def get_save_data_path(self, *, timeout: float | None = None) -> str:
         return "/data/smp1"
 
+    def get_current_mda_file(self, *, timeout: float | None = None) -> str:
+        return "2idd_0001.mda"
+
 
 def test_move_sample_delegates_to_qserver(monkeypatch: pytest.MonkeyPatch) -> None:
     dummy = DummyQServer()

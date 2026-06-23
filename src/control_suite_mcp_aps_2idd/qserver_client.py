@@ -33,10 +33,12 @@ class QServerActionConfig:
       internally when line scans need sample-y positioning.
     - ``move_zp_z`` backs the MCP ``set_parameters`` path for zp-z motion.
     - ``get_save_data_path`` fetches current save-path metadata.
+    - ``get_current_mda_file`` fetches the current/next MDA file name.
 
     All motion and acquisition actions are expected to be QueueServer plans in
-    the current design. ``get_save_data_path`` remains a QueueServer helper
-    function because it is a metadata lookup rather than a motion or scan item.
+    the current design. ``get_save_data_path`` and ``get_current_mda_file``
+    remain QueueServer helper functions because they are metadata lookups
+    rather than motion or scan items.
     """
 
     acquire_image: str = "fly2d_scanrecord"
@@ -44,6 +46,7 @@ class QServerActionConfig:
     move_sample: str | None = None
     move_zp_z: str | None = None
     get_save_data_path: str = "get_save_data_path"
+    get_current_mda_file: str = "get_current_mda_file"
 
 
 @dataclass(frozen=True)
@@ -86,6 +89,10 @@ class QServerConnectionConfig:
                 get_save_data_path=os.getenv(
                     "QSERVER_GET_SAVE_DATA_PATH_FUNCTION",
                     "get_save_data_path",
+                ),
+                get_current_mda_file=os.getenv(
+                    "QSERVER_GET_CURRENT_MDA_FILE_FUNCTION",
+                    "get_current_mda_file",
                 ),
             ),
         )
@@ -148,6 +155,13 @@ class RestrictedQServerClient:
         """Run the allowlisted QueueServer helper that reports the data path."""
         return self._execute_function(
             self.config.actions.get_save_data_path,
+            timeout=timeout,
+        )
+
+    def get_current_mda_file(self, *, timeout: float | None = None) -> Any:
+        """Run the allowlisted QueueServer helper that reports the MDA file."""
+        return self._execute_function(
+            self.config.actions.get_current_mda_file,
             timeout=timeout,
         )
 
