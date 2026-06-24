@@ -458,16 +458,36 @@ class APSMICPostProcessor:
         using_xrf_maps: bool,
     ) -> AcquisitionArtifacts:
         artifacts = artifact_paths(save_data_path, current_mda_file)
+        logger.info(
+            "Preparing acquisition artifacts for %s: mda=%s h5=%s png_dir=%s raw_dir=%s",
+            current_mda_file,
+            artifacts.mda_path,
+            artifacts.h5_path,
+            artifacts.png_output_dir,
+            artifacts.raw_output_dir,
+        )
         if using_xrf_maps:
+            logger.info("Processing %s with XRF-Maps in %s", current_mda_file, artifacts.parent_dir)
             if not process_xrfdata(artifacts.parent_dir, current_mda_file):
                 raise RuntimeError(f"Failed to process {current_mda_file} with XRF-Maps.")
-        elif not wait_for_stable_file(
+        else:
+            logger.info(
+                "Waiting for HDF5 file %s to exist and remain stable for %.1f seconds",
+                artifacts.h5_path,
+                self.h5_stable_s,
+            )
+            if not wait_for_stable_file(
+                artifacts.h5_path,
+                stable_s=self.h5_stable_s,
+                timeout_s=self.wait_timeout_s,
+                poll_s=self.poll_s,
+            ):
+                raise TimeoutError(f"Timed out waiting for HDF5 file {artifacts.h5_path}.")
+        logger.info(
+            "Verifying HDF5 file %s remains stable for %.1f seconds",
             artifacts.h5_path,
-            stable_s=self.h5_stable_s,
-            timeout_s=self.wait_timeout_s,
-            poll_s=self.poll_s,
-        ):
-            raise TimeoutError(f"Timed out waiting for HDF5 file {artifacts.h5_path}.")
+            self.h5_stable_s,
+        )
         if not wait_for_stable_file(
             artifacts.h5_path,
             stable_s=self.h5_stable_s,
@@ -477,6 +497,7 @@ class APSMICPostProcessor:
             raise TimeoutError(f"Timed out waiting for HDF5 file {artifacts.h5_path}.")
         artifacts.png_output_dir.mkdir(parents=True, exist_ok=True)
         artifacts.raw_output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Artifact directories are ready for %s", current_mda_file)
         return artifacts
 
     def process_image(
@@ -494,10 +515,18 @@ class APSMICPostProcessor:
             current_mda_file=current_mda_file,
             using_xrf_maps=using_xrf_maps,
         )
+        logger.info("Parsing image HDF5 data from %s", artifacts.h5_path)
         data = load_h5(artifacts.h5_path)
         channel, image = select_channel(data, channels=channels, fit_type="ROI")
+        logger.info(
+            "Selected image channel %s from %s with array shape %s",
+            channel,
+            artifacts.h5_path,
+            image.shape,
+        )
         raw_path = (artifacts.raw_output_dir / f"{current_mda_file}_{channel}.npy").resolve()
         np.save(raw_path, np.asarray(image))
+        logger.info("Saved raw image array to %s", raw_path)
         img_path = render_xrf_image(
             image,
             np.asarray(data["x_axis"]),
@@ -508,6 +537,7 @@ class APSMICPostProcessor:
             plot_in_log_scale=plot_in_log_scale,
             show_colorbar=show_colorbar,
         )
+        logger.info("Saved rendered image PNG to %s", img_path)
         wait_for_stable_file(
             img_path,
             stable_s=self.output_stable_s,
@@ -537,24 +567,42 @@ class APSMICPostProcessor:
             current_mda_file=current_mda_file,
             using_xrf_maps=using_xrf_maps,
         )
+        logger.info("Parsing line-scan HDF5 data from %s", artifacts.h5_path)
         data = load_h5(artifacts.h5_path)
         channel, image = select_channel(data, channels=channels, roi_num=roi_num, fit_type="ROI")
+        logger.info(
+            "Selected line-scan channel %s from %s with array shape %s",
+            channel,
+            artifacts.h5_path,
+            image.shape,
+        )
         x, y, axis_label = line_profile(
             image,
             np.asarray(data["x_axis"]),
             np.asarray(data["y_axis"]),
             scan_samy=scan_samy,
         )
+        logger.info("Fitting Gaussian to line profile with %d points", x.size)
         a, mu, sigma, c, normalized_residual, x_min, x_max = fit_gaussian_1d(x, y)
         if np.any(np.isnan([a, mu, sigma, c])):
             val_gauss = None
             fwhm = None
+            logger.info("Gaussian fit did not produce finite primary parameters")
         else:
             val_gauss = gaussian_1d(x, a, mu, sigma, c)
             fwhm = float(2.35 * abs(sigma))
+            logger.info(
+                "Gaussian fit completed: fwhm=%s a=%s mu=%s sigma=%s c=%s",
+                fwhm,
+                a,
+                mu,
+                sigma,
+                c,
+            )
 
         raw_path = (artifacts.raw_output_dir / f"{current_mda_file}_{channel}_line.npy").resolve()
         np.save(raw_path, np.column_stack((x, y)))
+        logger.info("Saved raw line-scan array to %s", raw_path)
         img_path = render_line_scan(
             x,
             y,
@@ -565,6 +613,7 @@ class APSMICPostProcessor:
             axis_label=axis_label,
             output_path=artifacts.png_output_dir / f"{data['scan']}_{channel}_line.png",
         )
+        logger.info("Saved rendered line-scan PNG to %s", img_path)
         wait_for_stable_file(
             img_path,
             stable_s=self.output_stable_s,
