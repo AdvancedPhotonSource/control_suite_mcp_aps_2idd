@@ -246,27 +246,31 @@ def process_xrfdata(
 
 
 def artifact_paths(save_data_path: str | Path, current_mda_file: str) -> AcquisitionArtifacts:
-    base = Path(str(save_data_path).replace("data1", "mnt/micdata1")).expanduser().resolve()
-    if base.suffix == ".mda":
-        mda_path = base
-        mda_dir = base.parent
-        parent_dir = mda_dir.parent if mda_dir.name == "mda" else mda_dir
-    elif base.name == "mda":
-        mda_dir = base
-        parent_dir = base.parent
-        mda_path = mda_dir / current_mda_file
-    else:
-        parent_dir = base
-        mda_dir = parent_dir / "mda"
-        mda_path = mda_dir / current_mda_file
+    # base = Path(str(save_data_path).replace("mda", "img.dat")).expanduser().resolve()
+    # if base.suffix == ".mda":
+    #     mda_path = base
+    #     mda_dir = base.parent
+    #     parent_dir = mda_dir.parent if mda_dir.name == "mda" else mda_dir
+    # elif base.name == "mda":
+    #     mda_dir = base
+    #     parent_dir = base.parent
+    #     mda_path = mda_dir / current_mda_file
+    # else:
+    #     parent_dir = base
+    #     mda_dir = parent_dir / "mda"
+    #     mda_path = mda_dir / current_mda_file
+
+    tool_output_dir = Path(save_data_path) / "tool_output"
+    if not tool_output_dir.exists():
+        tool_output_dir.mkdir(parents=True, exist_ok=True)
 
     return AcquisitionArtifacts(
-        parent_dir=parent_dir,
-        mda_dir=mda_dir,
-        mda_path=mda_path,
-        h5_path=parent_dir / "img.dat" / f"{current_mda_file}.h50",
-        png_output_dir=parent_dir / "png_output",
-        raw_output_dir=parent_dir / "npy_output",
+        parent_dir=save_data_path,
+        mda_dir=Path(save_data_path) / "mda",
+        mda_path=Path(save_data_path) / "mda" / current_mda_file,
+        h5_path=Path(save_data_path) / "img.dat" / f"{current_mda_file}.h50",
+        png_output_dir=Path(tool_output_dir) / "png_output",
+        raw_output_dir=Path(tool_output_dir) / "npy_output",
     )
 
 

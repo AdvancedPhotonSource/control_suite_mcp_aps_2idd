@@ -77,7 +77,11 @@ class DummyQServer:
 
 
 class DummyPostProcessor:
+    def __init__(self) -> None:
+        self.process_image_calls: list[dict[str, object]] = []
+
     def process_image(self, **kwargs) -> dict[str, object]:
+        self.process_image_calls.append(dict(kwargs))
         return {
             "img_path": "/tmp/2idd_0001.mda_Cr.png",
             "raw_data_path": "/tmp/2idd_0001.mda_Cr.npy",
@@ -205,6 +209,51 @@ def test_acquire_image_streams_console_and_reports_item_uid(
     assert result["save_data_path"] == "/data/smp1"
     assert result["img_path"] == "/tmp/2idd_0001.mda_Cr.png"
     assert result["raw_data_path"] == "/tmp/2idd_0001.mda_Cr.npy"
+
+
+def test_process_image_reprocesses_existing_mda_without_acquiring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument(
+        APSTwoIDDConfig(xrf_elms=("Fe",), plot_image_in_log_scale=True)
+    )
+
+    result = instrument.process_image("2idd_0009.mda")
+
+    # No new scan is run; only the save-path lookup is consulted.
+    assert dummy.acquire_image_calls == []
+    call = instrument.postprocessor.process_image_calls[0]
+    assert call["current_mda_file"] == "2idd_0009.mda"
+    assert call["save_data_path"] == "/data/smp1"  # defaulted from qserver
+    assert call["channels"] == ("Fe",)  # defaulted from config
+    assert call["plot_in_log_scale"] is True  # defaulted from config
+    assert result["current_mda_file"] == "2idd_0009.mda"
+    assert result["save_data_path"] == "/data/smp1"
+    assert result["img_path"] == "/tmp/2idd_0001.mda_Cr.png"
+
+
+def test_process_image_uses_explicit_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument()
+
+    instrument.process_image(
+        "2idd_0009.mda",
+        save_data_path="/custom/path",
+        channels=["Cr", "Fe"],
+        plot_in_log_scale=False,
+        show_colorbar=True,
+    )
+
+    call = instrument.postprocessor.process_image_calls[0]
+    assert call["save_data_path"] == "/custom/path"
+    assert call["channels"] == ("Cr", "Fe")
+    assert call["plot_in_log_scale"] is False
+    assert call["show_colorbar"] is True
 
 
 def test_acquire_line_scan_streams_console_and_passes_positioner(

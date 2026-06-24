@@ -35,6 +35,9 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         def acquire_image(self, **kwargs) -> dict[str, object]:
             return kwargs
 
+        def process_image(self, **kwargs) -> dict[str, object]:
+            return kwargs
+
         def dump_array(self, buffer_name: str) -> dict[str, str]:
             return {"buffer_name": buffer_name}
 
@@ -63,6 +66,7 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         "get_current_mda_file",
         "get_save_data_path",
         "acquire_image",
+        "process_image",
         "dump_array",
         "get_attribute_payload",
         "acquire_line_scan",

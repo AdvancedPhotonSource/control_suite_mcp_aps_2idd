@@ -189,6 +189,57 @@ class QServerAPSTwoIDDMICInstrument:
             }
         )
 
+    def process_image(
+        self,
+        current_mda_file: str,
+        save_data_path: str | None = None,
+        channels: list[str] | None = None,
+        using_xrf_maps: bool | None = None,
+        plot_in_log_scale: bool | None = None,
+        show_colorbar: bool | None = None,
+    ) -> dict[str, Any]:
+        """Post-process an already-acquired MDA file into PNG/NPY artifacts.
+
+        Reuses the same postprocessor as ``acquire_image`` but on existing
+        data, so an image can be (re)visualized without running a new scan.
+        ``save_data_path`` defaults to the current QueueServer save path; the
+        visualization options default to the service configuration.
+        """
+        resolved_path = (
+            self.qserver.get_save_data_path(timeout=10.0)
+            if save_data_path is None
+            else save_data_path
+        )
+        postprocessed = self.postprocessor.process_image(
+            save_data_path=resolved_path,
+            current_mda_file=current_mda_file,
+            channels=(
+                self.config.xrf_elms if channels is None else tuple(channels)
+            ),
+            using_xrf_maps=(
+                self.config.using_xrf_maps
+                if using_xrf_maps is None
+                else using_xrf_maps
+            ),
+            plot_in_log_scale=(
+                self.config.plot_image_in_log_scale
+                if plot_in_log_scale is None
+                else plot_in_log_scale
+            ),
+            show_colorbar=(
+                self.config.show_colorbar_in_image
+                if show_colorbar is None
+                else show_colorbar
+            ),
+        )
+        return json_safe(
+            {
+                "save_data_path": resolved_path,
+                "current_mda_file": current_mda_file,
+                **postprocessed,
+            }
+        )
+
     # Positioner axis -> (allowable range, unit) used for scan-range validation.
     _line_scan_positioners = ("x", "y", "z", "energy")
 

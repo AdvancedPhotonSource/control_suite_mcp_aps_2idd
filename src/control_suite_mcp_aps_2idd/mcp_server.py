@@ -274,6 +274,53 @@ def create_mcp(
         )
 
     @mcp.tool()
+    async def process_image(
+        current_mda_file: Annotated[
+            str,
+            "MDA file name to process, e.g. '2idd_0315.mda'.",
+        ],
+        save_data_path: Annotated[
+            str | None,
+            "Directory holding the MDA file; defaults to the current "
+            "QueueServer save path when omitted.",
+        ] = None,
+        plot_in_log_scale: Annotated[
+            bool | None,
+            "Render the image on a log color scale; uses the configured "
+            "plot_image_in_log_scale value when omitted.",
+        ] = None,
+        show_colorbar: Annotated[
+            bool | None,
+            "Show a colorbar on the rendered image; uses the configured "
+            "show_colorbar_in_image value when omitted.",
+        ] = None,
+        channels: Annotated[
+            list[str] | None,
+            "XRF element channels to select; uses the configured xrf_elms "
+            "when omitted.",
+        ] = None,
+    ) -> dict[str, Any]:
+        """Post-process an already-acquired MDA file into PNG/NPY artifacts.
+
+        Runs the same postprocessing as ``acquire_image`` on existing data,
+        so an image can be (re)visualized without acquiring a new scan (no
+        beamline motion, no new QueueServer plan). The result contains
+        ``img_path`` (rendered PNG), ``raw_data_path`` (2D ``.npy`` array),
+        ``channel``, ``h5_path``, ``mda_path``, ``save_data_path``, and
+        ``current_mda_file``. Artifact paths are absolute.
+        """
+        return await call_backend(
+            "process_image",
+            {
+                "current_mda_file": current_mda_file,
+                "save_data_path": save_data_path,
+                "plot_in_log_scale": plot_in_log_scale,
+                "show_colorbar": show_colorbar,
+                "channels": channels,
+            },
+        )
+
+    @mcp.tool()
     async def dump_array(
         buffer_name: Annotated[
             str,

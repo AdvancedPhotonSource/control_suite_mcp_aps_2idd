@@ -73,6 +73,7 @@ http://127.0.0.1:8050/mcp
 - `get_current_mda_file()`
 - `get_save_data_path()`
 - `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
+- `process_image(current_mda_file, save_data_path=None, plot_in_log_scale=None, show_colorbar=None, channels=None)`
 - `dump_array(buffer_name)`
 - `acquire_line_scan(positioner_name, length, stepsize, center=0, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
 - `move_sample(axis, position)`
@@ -123,6 +124,13 @@ For an HTTP MCP client:
   for the plotted line profile and `.npy` profile data, plus
   `gaussian_fit_params` with `fwhm`, `a`, `mu`, `sigma`, `c`,
   `normalized_residual`, `x_min`, and `x_max`.
+- `process_image` runs the same postprocessing as `acquire_image` on an
+  existing MDA file, so already-acquired data can be (re)visualized without a
+  new scan — no beamline motion and no QueueServer plan. `save_data_path`
+  defaults to the current QueueServer save path, and `plot_in_log_scale`,
+  `show_colorbar`, and `channels` default to the service configuration. It
+  returns `img_path`, `raw_data_path`, `channel`, `h5_path`, `mda_path`,
+  `save_data_path`, and `current_mda_file`.
 - `acquire_line_scan` drives the axis named by `positioner_name`
   (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a
