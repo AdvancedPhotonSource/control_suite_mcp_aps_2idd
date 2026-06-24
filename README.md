@@ -68,20 +68,20 @@ http://127.0.0.1:8050/mcp
 
 ## Tools
 
-- `health()`
-- `get_state()`
-- `get_current_mda_file()`
-- `get_save_data_path()`
-- `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
-- `process_image(current_mda_file, save_data_path=None, plot_in_log_scale=None, show_colorbar=None, channels=None)`
-- `dump_array(buffer_name)`
-- `acquire_line_scan(positioner_name, length, stepsize, center=0, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
-- `move_sample(axis, position)`
-- `move_zp_z(position)`
-- `set_parameters(parameters)`
-- `get_attribute_payload(name)`
+- `aps2idd_control.health()`
+- `aps2idd_control.get_state()`
+- `aps2idd_control.get_current_mda_file()`
+- `aps2idd_control.get_save_data_path()`
+- `aps2idd_control.acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
+- `aps2idd_control.process_image(current_mda_file, save_data_path=None, plot_in_log_scale=None, show_colorbar=None, channels=None)`
+- `aps2idd_control.dump_array(buffer_name)`
+- `aps2idd_control.acquire_line_scan(positioner_name, length, stepsize, center=0, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
+- `aps2idd_control.move_sample(axis, position)`
+- `aps2idd_control.move_zp_z(position)`
+- `aps2idd_control.set_parameters(parameters)`
+- `aps2idd_control.get_attribute_payload(name)`
 
-`dump_array()` intentionally returns an error in this QServer-only design,
+`aps2idd_control.dump_array()` intentionally returns an error in this QServer-only design,
 because the MCP service does not own in-process image buffers.
 
 ## MCP Client Configuration
@@ -102,16 +102,17 @@ For an HTTP MCP client:
 ## Tool Contract Notes
 
 - Scan dimensions, positions, and step sizes are in microns unless noted otherwise.
-- `move_zp_z(position)` drives the zone-plate z positioner, validated against
+- `aps2idd_control.move_zp_z(position)` drives the zone-plate z positioner, validated against
   `allowable_zp_range` (distinct from the sample z motor's `allowable_z_range`).
-  `set_parameters(parameters)` is equivalent, using `parameters[0]` as the zp-z
-  target (also validated against `allowable_zp_range`).
+  `aps2idd_control.set_parameters(parameters)` is equivalent, using
+  `parameters[0]` as the zp-z target (also validated against
+  `allowable_zp_range`).
 - Motion and acquisition tools are QueueServer *plans*, submitted with
   `item_execute`. Plans return an `item_uid` (not a `task_uid`); the service
   waits for the RE manager to return to idle and reads the outcome from
   QueueServer history. `task_uid` is only produced by QueueServer *functions*
   (e.g. `get_save_data_path`).
-- `acquire_image` and `acquire_line_scan` stream live scan progress as MCP
+- `aps2idd_control.acquire_image` and `aps2idd_control.acquire_line_scan` stream live scan progress as MCP
   progress notifications, sourced from the QueueServer console (ZMQ info)
   output. Their results report `item_uid`, `run_uids`, `scan_ids`,
   `save_data_path`, and `current_mda_file`. `current_mda_file` is captured
@@ -124,14 +125,15 @@ For an HTTP MCP client:
   for the plotted line profile and `.npy` profile data, plus
   `gaussian_fit_params` with `fwhm`, `a`, `mu`, `sigma`, `c`,
   `normalized_residual`, `x_min`, and `x_max`.
-- `process_image` runs the same postprocessing as `acquire_image` on an
+- `aps2idd_control.process_image` runs the same postprocessing as
+  `aps2idd_control.acquire_image` on an
   existing MDA file, so already-acquired data can be (re)visualized without a
   new scan — no beamline motion and no QueueServer plan. `save_data_path`
   defaults to the current QueueServer save path, and `plot_in_log_scale`,
   `show_colorbar`, and `channels` default to the service configuration. It
   returns `img_path`, `raw_data_path`, `channel`, `h5_path`, `mda_path`,
   `save_data_path`, and `current_mda_file`.
-- `acquire_line_scan` drives the axis named by `positioner_name`
+- `aps2idd_control.acquire_line_scan` drives the axis named by `positioner_name`
   (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a
   relative offset** from the positioner's position at scan time (e.g. `center=0`
