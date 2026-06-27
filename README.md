@@ -81,8 +81,11 @@ http://127.0.0.1:8050/mcp
 - `aps2idd_control.set_parameters(parameters)`
 - `aps2idd_control.get_attribute_payload(name)`
 
-`aps2idd_control.dump_array()` intentionally returns an error in this QServer-only design,
-because the MCP service does not own in-process image buffers.
+After `aps2idd_control.acquire_line_scan()` succeeds, the service keeps
+`image_0`, `image_km1`, and `image_k` buffers plus matching `psize_0`,
+`psize_km1`, and `psize_k` values inferred from the line-scan step size.
+`aps2idd_control.dump_array()` returns those image buffers as base64-encoded
+NumPy payloads.
 
 ## MCP Client Configuration
 
@@ -124,7 +127,9 @@ For an HTTP MCP client:
   `acquire_line_scan` returns absolute `img_path` and `raw_data_path` fields
   for the plotted line profile and `.npy` profile data, plus
   `gaussian_fit_params` with `fwhm`, `a`, `mu`, `sigma`, `c`,
-  `normalized_residual`, `x_min`, and `x_max`.
+  `normalized_residual`, `x_min`, and `x_max`. Successful line scans also
+  update the in-process `image_0`, `image_km1`, `image_k`, `psize_0`,
+  `psize_km1`, and `psize_k` attributes.
 - `aps2idd_control.process_image` runs the same postprocessing as
   `aps2idd_control.acquire_image` on an
   existing MDA file, so already-acquired data can be (re)visualized without a

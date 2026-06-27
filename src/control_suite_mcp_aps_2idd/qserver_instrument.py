@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable, Mapping
 from typing import Any
+
+import numpy as np
 
 from control_suite_mcp_aps_2idd.acquisition_processing import APSMICPostProcessor
 from control_suite_mcp_aps_2idd.common import (
@@ -57,6 +60,12 @@ class QServerAPSTwoIDDMICInstrument:
         self.postprocessor = APSMICPostProcessor()
         self.image_acquisition_call_history: list[dict[str, Any]] = []
         self.line_scan_call_history: list[dict[str, Any]] = []
+        self.image_0: np.ndarray | None = None
+        self.image_km1: np.ndarray | None = None
+        self.image_k: np.ndarray | None = None
+        self.psize_0: float | None = None
+        self.psize_km1: float | None = None
+        self.psize_k: float | None = None
 
     def health(self) -> dict[str, Any]:
         return self.qserver.health()
@@ -114,17 +123,51 @@ class QServerAPSTwoIDDMICInstrument:
     def set_attribute(self, name: str, value: Any) -> dict[str, Any]:
         return self.set_config(name=name, value=value)
 
-    def dump_array(self, buffer_name: str) -> dict[str, str]:
-        raise RuntimeError(
-            "QueueServer-backed MCP service does not own in-process image buffers. "
-            f"dump_array('{buffer_name}') is unavailable in this mode."
-        )
+    def dump_array(self, buffer_name: str) -> dict[str, Any]:
+        buffer = self._get_array_buffer(buffer_name)
+        return self._array_payload(buffer)
 
     def get_attribute_payload(self, name: str) -> Any:
+        if name in {"image_0", "image_km1", "image_k"}:
+            return self._array_payload(self._get_array_buffer(name))
+        if name in {"psize_0", "psize_km1", "psize_k"}:
+            value = getattr(self, name)
+            if value is None:
+                raise RuntimeError(f"Attribute '{name}' has not been populated by a line scan yet.")
+            return value
         state = self.get_state()
         if name not in state:
             raise AttributeError(name)
         return state[name]
+
+    def _get_array_buffer(self, name: str) -> np.ndarray:
+        if name not in {"image_0", "image_km1", "image_k"}:
+            raise AttributeError(name)
+        buffer = getattr(self, name)
+        if buffer is None:
+            raise RuntimeError(f"Buffer '{name}' has not been populated by a line scan yet.")
+        return buffer
+
+    @staticmethod
+    def _array_payload(array: np.ndarray) -> dict[str, Any]:
+        contiguous = np.ascontiguousarray(array)
+        return {
+            "dtype": str(contiguous.dtype),
+            "shape": list(contiguous.shape),
+            "data": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+        }
+
+    def _store_image_buffer(self, image: np.ndarray, psize: float) -> None:
+        current = np.asarray(image).copy()
+        psize_value = float(psize)
+        if self.image_0 is None:
+            self.image_0 = current.copy()
+            self.psize_0 = psize_value
+        if self.image_k is not None:
+            self.image_km1 = self.image_k.copy()
+            self.psize_km1 = self.psize_k
+        self.image_k = current
+        self.psize_k = psize_value
 
     def acquire_image(
         self,
@@ -337,6 +380,9 @@ class QServerAPSTwoIDDMICInstrument:
             using_xrf_maps=self.config.using_xrf_maps,
             scan_samy=self.config.scan_samy,
         )
+        last_image = getattr(self.postprocessor, "last_image", None)
+        if last_image is not None:
+            self._store_image_buffer(last_image, stepsize)
         return json_safe(
             {
                 "plan_name": execution["plan_name"],
