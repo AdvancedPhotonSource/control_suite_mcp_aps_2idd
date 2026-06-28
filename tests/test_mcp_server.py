@@ -67,20 +67,20 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
     tool_names = {tool.name for tool in asyncio.run(mcp.list_tools())}
 
     assert tool_names == {
-        "health",
-        "get_state",
-        "get_current_mda_file",
-        "get_save_data_path",
-        "get_global_health_snapshot",
-        "recover_detector",
-        "acquire_image",
-        "process_image",
-        "dump_array",
-        "get_attribute_payload",
-        "acquire_line_scan",
-        "move_sample",
-        "move_zp_z",
-        "set_parameters",
+        "aps2idd_control.health",
+        "aps2idd_control.get_state",
+        "aps2idd_control.get_current_mda_file",
+        "aps2idd_control.get_save_data_path",
+        "aps2idd_control.get_global_health_snapshot",
+        "aps2idd_control.recover_detector",
+        "aps2idd_control.acquire_image",
+        "aps2idd_control.process_image",
+        "aps2idd_control.dump_array",
+        "aps2idd_control.get_attribute_payload",
+        "aps2idd_control.acquire_line_scan",
+        "aps2idd_control.move_sample",
+        "aps2idd_control.move_zp_z",
+        "aps2idd_control.set_parameters",
     }
 
 
@@ -110,7 +110,7 @@ def test_acquire_image_streams_console_as_progress(monkeypatch) -> None:
     async def run():
         async with Client(mcp, progress_handler=progress_handler) as client:
             return await client.call_tool(
-                "acquire_image",
+                "aps2idd_control.acquire_image",
                 {
                     "width": 1.0,
                     "height": 1.0,

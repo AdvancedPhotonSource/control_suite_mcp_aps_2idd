@@ -68,23 +68,26 @@ http://127.0.0.1:8050/mcp
 
 ## Tools
 
-- `health()`
-- `get_state()`
-- `get_current_mda_file()`
-- `get_save_data_path()`
-- `get_global_health_snapshot()`
-- `recover_detector(device_name, retries=1)`
-- `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
-- `process_image(current_mda_file, save_data_path=None, plot_in_log_scale=None, show_colorbar=None, channels=None)`
-- `dump_array(buffer_name)`
-- `acquire_line_scan(positioner_name, length, stepsize, center=0, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
-- `move_sample(axis, position)`
-- `move_zp_z(position)`
-- `set_parameters(parameters)`
-- `get_attribute_payload(name)`
+- `aps2idd_control.health()`
+- `aps2idd_control.get_state()`
+- `aps2idd_control.get_current_mda_file()`
+- `aps2idd_control.get_save_data_path()`
+- `aps2idd_control.get_global_health_snapshot()`
+- `aps2idd_control.recover_detector(device_name, retries=1)`
+- `aps2idd_control.acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
+- `aps2idd_control.process_image(current_mda_file, save_data_path=None, plot_in_log_scale=None, show_colorbar=None, channels=None)`
+- `aps2idd_control.dump_array(buffer_name)`
+- `aps2idd_control.acquire_line_scan(positioner_name, length, stepsize, center=0, sample_x=None, sample_y=None, sample_z=None, energy=None, dwell_ms=None)`
+- `aps2idd_control.move_sample(axis, position)`
+- `aps2idd_control.move_zp_z(position)`
+- `aps2idd_control.set_parameters(parameters)`
+- `aps2idd_control.get_attribute_payload(name)`
 
-`dump_array()` intentionally returns an error in this QServer-only design,
-because the MCP service does not own in-process image buffers.
+After `aps2idd_control.acquire_line_scan()` succeeds, the service keeps
+`image_0`, `image_km1`, and `image_k` buffers plus matching `psize_0`,
+`psize_km1`, and `psize_k` values inferred from the line-scan step size.
+`aps2idd_control.dump_array()` returns those image buffers as base64-encoded
+NumPy payloads.
 
 ## MCP Client Configuration
 
@@ -104,27 +107,28 @@ For an HTTP MCP client:
 ## Tool Contract Notes
 
 - Scan dimensions, positions, and step sizes are in microns unless noted otherwise.
-- `move_zp_z(position)` drives the zone-plate z positioner, validated against
+- `aps2idd_control.move_zp_z(position)` drives the zone-plate z positioner, validated against
   `allowable_zp_range` (distinct from the sample z motor's `allowable_z_range`).
-  `set_parameters(parameters)` is equivalent, using `parameters[0]` as the zp-z
-  target (also validated against `allowable_zp_range`).
+  `aps2idd_control.set_parameters(parameters)` is equivalent, using
+  `parameters[0]` as the zp-z target (also validated against
+  `allowable_zp_range`).
 - Motion and acquisition tools are QueueServer *plans*, submitted with
   `item_execute`. Plans return an `item_uid` (not a `task_uid`); the service
   waits for the RE manager to return to idle and reads the outcome from
   QueueServer history. `task_uid` is only produced by QueueServer *functions*
   (e.g. `get_save_data_path`).
-- `get_global_health_snapshot()` returns a beamline + scan device snapshot
+- `aps2idd_control.get_global_health_snapshot()` returns a beamline + scan device snapshot
   (`{"timestamp": ..., "devices": {name: {"pvs": {...}}}}`) covering `ring`,
   `sample`, `scanrecord`, the area detectors, and `fly_dwell`. It is the
   observable for beamline/scan health monitoring and is safe to poll while a
   scan runs (executed as a background QueueServer function). The device set is
   driven by the beamline monitor manifest (`qserver.beamline_monitor_manifest`).
-- `recover_detector(device_name, retries=1)` attempts to unhang a stalled area
+- `aps2idd_control.recover_detector(device_name, retries=1)` attempts to unhang a stalled area
   detector (e.g. `xmap`, `xp3`, `eiger`). If a plan is running it pauses the RE
   (immediate), resets the detector through the allowlisted QueueServer
   `recover_detector` function, then resumes; an already-paused RE is left paused.
   The result includes `device`, `success`, and a `progress` step list.
-- `acquire_image` and `acquire_line_scan` stream live scan progress as MCP
+- `aps2idd_control.acquire_image` and `aps2idd_control.acquire_line_scan` stream live scan progress as MCP
   progress notifications, sourced from the QueueServer console (ZMQ info)
   output. Their results report `item_uid`, `run_uids`, `scan_ids`,
   `save_data_path`, and `current_mda_file`. `current_mda_file` is captured
@@ -136,15 +140,18 @@ For an HTTP MCP client:
   `acquire_line_scan` returns absolute `img_path` and `raw_data_path` fields
   for the plotted line profile and `.npy` profile data, plus
   `gaussian_fit_params` with `fwhm`, `a`, `mu`, `sigma`, `c`,
-  `normalized_residual`, `x_min`, and `x_max`.
-- `process_image` runs the same postprocessing as `acquire_image` on an
+  `normalized_residual`, `x_min`, and `x_max`. Successful line scans also
+  update the in-process `image_0`, `image_km1`, `image_k`, `psize_0`,
+  `psize_km1`, and `psize_k` attributes.
+- `aps2idd_control.process_image` runs the same postprocessing as
+  `aps2idd_control.acquire_image` on an
   existing MDA file, so already-acquired data can be (re)visualized without a
   new scan — no beamline motion and no QueueServer plan. `save_data_path`
   defaults to the current QueueServer save path, and `plot_in_log_scale`,
   `show_colorbar`, and `channels` default to the service configuration. It
   returns `img_path`, `raw_data_path`, `channel`, `h5_path`, `mda_path`,
   `save_data_path`, and `current_mda_file`.
-- `acquire_line_scan` drives the axis named by `positioner_name`
+- `aps2idd_control.acquire_line_scan` drives the axis named by `positioner_name`
   (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a
   relative offset** from the positioner's position at scan time (e.g. `center=0`

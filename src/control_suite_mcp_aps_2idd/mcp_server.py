@@ -190,17 +190,17 @@ def create_mcp(
             await ctx.report_progress(progress=steps, message=text or None)
         return await work
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.health")
     async def health() -> dict[str, Any]:
         """Check whether QueueServer is reachable and the MCP backend is healthy."""
         return await call_backend("health")
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.get_state")
     async def get_state() -> dict[str, Any]:
         """Return APS 2-ID-D service and QueueServer state."""
         return await call_backend("get_state")
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.get_current_mda_file")
     async def get_current_mda_file() -> dict[str, Any]:
         """Return the current/next MDA file name from QueueServer.
 
@@ -210,7 +210,7 @@ def create_mcp(
         """
         return await call_backend("get_current_mda_file")
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.get_save_data_path")
     async def get_save_data_path() -> dict[str, Any]:
         """Return the current save data path from QueueServer.
 
@@ -220,7 +220,7 @@ def create_mcp(
         """
         return await call_backend("get_save_data_path")
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.get_global_health_snapshot")
     async def get_global_health_snapshot() -> dict[str, Any]:
         """Return a beamline + scan device health snapshot from QueueServer.
 
@@ -237,7 +237,7 @@ def create_mcp(
         """
         return await call_backend("get_global_health_snapshot")
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.recover_detector")
     async def recover_detector(
         device_name: Annotated[
             str,
@@ -273,7 +273,7 @@ def create_mcp(
         """Alias for ``set_config`` used by EAA MCP acquisition proxy."""
         return await call_backend("set_attribute", {"name": name, "value": value})
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.acquire_image")
     async def acquire_image(
         width: Annotated[float, "The width of the scan area in microns."],
         height: Annotated[float, "The height of the scan area in microns."],
@@ -318,7 +318,7 @@ def create_mcp(
             ctx,
         )
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.process_image")
     async def process_image(
         current_mda_file: Annotated[
             str,
@@ -365,7 +365,7 @@ def create_mcp(
             },
         )
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.dump_array")
     async def dump_array(
         buffer_name: Annotated[
             str,
@@ -375,7 +375,7 @@ def create_mcp(
         """Raise an error because direct QueueServer mode has no local image buffers."""
         return await call_backend("dump_array", {"buffer_name": buffer_name})
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.get_attribute_payload")
     async def get_attribute_payload(
         name: Annotated[str, "Native acquisition or parameter tool attribute name."],
     ) -> Any:
@@ -387,7 +387,7 @@ def create_mcp(
         return await call_backend("get_attribute_payload", {"name": name})
         
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.acquire_line_scan")
     async def acquire_line_scan(
         positioner_name: Annotated[
             str,
@@ -475,7 +475,7 @@ def create_mcp(
             ctx,
         )
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.move_sample")
     async def move_sample(
         axis: Annotated[str, "Sample motion axis: x, y, or z."],
         position: Annotated[float, "Target sample position."],
@@ -483,7 +483,7 @@ def create_mcp(
         """Move one sample axis through an allowlisted QueueServer plan."""
         return await call_backend("move_sample", {"axis": axis, "position": position})
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.move_zp_z")
     async def move_zp_z(
         position: Annotated[float, "Zone-plate z (zp-z) target position in microns."],
     ) -> dict[str, Any]:
@@ -495,7 +495,7 @@ def create_mcp(
         """
         return await call_backend("move_zp_z", {"position": position})
 
-    @mcp.tool()
+    @mcp.tool(name="aps2idd_control.set_parameters")
     async def set_parameters(
         parameters: Annotated[
             list[float],

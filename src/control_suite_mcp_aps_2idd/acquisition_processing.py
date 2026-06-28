@@ -453,6 +453,7 @@ class APSMICPostProcessor:
         self.output_stable_s = output_stable_s
         self.wait_timeout_s = wait_timeout_s
         self.poll_s = poll_s
+        self.last_image: np.ndarray | None = None
 
     def prepare_artifacts(
         self,
@@ -528,6 +529,7 @@ class APSMICPostProcessor:
             artifacts.h5_path,
             image.shape,
         )
+        self.last_image = np.asarray(image).copy()
         raw_path = (artifacts.raw_output_dir / f"{current_mda_file}_{channel}.npy").resolve()
         np.save(raw_path, np.asarray(image))
         logger.info("Saved raw image array to %s", raw_path)
@@ -580,6 +582,7 @@ class APSMICPostProcessor:
             artifacts.h5_path,
             image.shape,
         )
+        self.last_image = np.asarray(image).copy()
         x, y, axis_label = line_profile(
             image,
             np.asarray(data["x_axis"]),

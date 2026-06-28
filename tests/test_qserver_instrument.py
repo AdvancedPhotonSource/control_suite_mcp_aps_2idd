@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+
+import numpy as np
 import pytest
 
 import control_suite_mcp_aps_2idd.qserver_instrument as qserver_instrument
@@ -99,6 +102,8 @@ class DummyQServer:
 class DummyPostProcessor:
     def __init__(self) -> None:
         self.process_image_calls: list[dict[str, object]] = []
+        self.line_scan_count = 0
+        self.last_image = None
 
     def process_image(self, **kwargs) -> dict[str, object]:
         self.process_image_calls.append(dict(kwargs))
@@ -108,6 +113,8 @@ class DummyPostProcessor:
         }
 
     def process_line_scan(self, **kwargs) -> dict[str, object]:
+        self.line_scan_count += 1
+        self.last_image = np.full((1, 3), self.line_scan_count)
         return {
             "img_path": "/tmp/2idd_0001.mda_Cr_line.png",
             "raw_data_path": "/tmp/2idd_0001.mda_Cr_line.npy",
@@ -333,6 +340,31 @@ def test_acquire_line_scan_center_defaults_to_zero(
 
     sent_request, _timeout = dummy.acquire_line_scan_calls[0]
     assert sent_request["center"] == 0.0
+
+
+def test_acquire_line_scan_updates_image_buffers_and_pixel_sizes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument(
+        APSTwoIDDConfig(allowable_x_range=(0.0, 100.0))
+    )
+
+    instrument.acquire_line_scan(positioner_name="x", length=10.0, stepsize=0.5)
+    instrument.acquire_line_scan(positioner_name="x", length=10.0, stepsize=0.25)
+
+    np.testing.assert_array_equal(instrument.image_0, np.full((1, 3), 1))
+    np.testing.assert_array_equal(instrument.image_km1, np.full((1, 3), 1))
+    np.testing.assert_array_equal(instrument.image_k, np.full((1, 3), 2))
+    assert instrument.psize_0 == 0.5
+    assert instrument.psize_km1 == 0.5
+    assert instrument.psize_k == 0.25
+
+    payload = instrument.dump_array("image_k")
+    decoded = np.frombuffer(base64.b64decode(payload["data"]), dtype=payload["dtype"])
+    np.testing.assert_array_equal(decoded.reshape(payload["shape"]), np.full((1, 3), 2))
+    assert instrument.get_attribute_payload("psize_k") == 0.25
 
 
 def test_acquire_line_scan_dwell_ms_overrides_config(
