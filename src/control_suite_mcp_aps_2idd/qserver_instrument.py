@@ -99,6 +99,30 @@ class QServerAPSTwoIDDMICInstrument:
             }
         )
 
+    def get_global_health_snapshot(self) -> dict[str, Any]:
+        """Return a beamline + scan device health snapshot from QueueServer.
+
+        The snapshot has a ``devices`` mapping (ring, sample, scanrecord,
+        detectors, etc.), each with a ``pvs`` mapping of PV readings. It is the
+        observable consumed by beamline/scan health evaluation.
+        """
+        snapshot = self.qserver.get_global_health_snapshot(timeout=30.0)
+        if snapshot is None:
+            return json_safe(
+                {"devices": {}, "error": "Health snapshot unavailable from QueueServer."}
+            )
+        return json_safe(snapshot)
+
+    def recover_detector(self, device_name: str, retries: int = 1) -> dict[str, Any]:
+        """Recover (unhang) a stalled area detector through QueueServer.
+
+        Pauses the running plan if needed, resets the named detector via the
+        allowlisted ``recover_detector`` QueueServer function, then resumes.
+        """
+        return json_safe(
+            self.qserver.recover_detector(device_name, retries=retries, timeout=30.0)
+        )
+
     def set_config(self, name: str, value: Any) -> dict[str, Any]:
         if name not in self.writable_config_names:
             raise ValueError(f"Unsupported configuration attribute: {name}")

@@ -14,6 +14,12 @@ class DummyQServer:
         self.move_zp_z_calls: list[tuple[float, float | None]] = []
         self.acquire_image_calls: list[tuple[dict[str, object], float | None]] = []
         self.acquire_line_scan_calls: list[tuple[dict[str, object], float | None]] = []
+        self.health_snapshot_calls: list[float | None] = []
+        self.health_snapshot_return: dict[str, object] = {
+            "timestamp": "2026-06-25T11:00:00+00:00",
+            "devices": {"ring": {"pvs": {}}},
+        }
+        self.recover_detector_calls: list[tuple[str, int, float | None]] = []
 
     def move_sample(self, axis: str, position: float, *, timeout: float | None = None) -> dict[str, object]:
         self.move_sample_calls.append((axis, position, timeout))
@@ -74,6 +80,20 @@ class DummyQServer:
 
     def get_current_mda_file(self, *, timeout: float | None = None) -> str:
         return "2idd_0001.mda"
+
+    def get_global_health_snapshot(self, *, timeout: float | None = None) -> dict[str, object]:
+        self.health_snapshot_calls.append(timeout)
+        return self.health_snapshot_return
+
+    def recover_detector(
+        self,
+        device_name: str,
+        *,
+        retries: int = 1,
+        timeout: float | None = None,
+    ) -> dict[str, object]:
+        self.recover_detector_calls.append((device_name, retries, timeout))
+        return {"device": device_name, "success": True, "retries": retries}
 
 
 class DummyPostProcessor:
@@ -414,3 +434,45 @@ def test_acquire_line_scan_rejects_unknown_positioner(
             center=0.0,
             stepsize=1.0,
         )
+
+
+def test_get_global_health_snapshot_delegates_to_qserver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument()
+
+    result = instrument.get_global_health_snapshot()
+
+    assert dummy.health_snapshot_calls == [30.0]
+    assert result["devices"] == {"ring": {"pvs": {}}}
+    assert result["timestamp"] == "2026-06-25T11:00:00+00:00"
+
+
+def test_get_global_health_snapshot_handles_missing_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    dummy.health_snapshot_return = None  # QueueServer function returned nothing
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument()
+
+    result = instrument.get_global_health_snapshot()
+
+    assert result["devices"] == {}
+    assert "error" in result
+
+
+def test_recover_detector_delegates_to_qserver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument()
+
+    result = instrument.recover_detector("xmap", retries=2)
+
+    assert dummy.recover_detector_calls == [("xmap", 2, 30.0)]
+    assert result["device"] == "xmap"
+    assert result["success"] is True

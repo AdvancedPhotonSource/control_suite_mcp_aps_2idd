@@ -26,6 +26,12 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         def get_save_data_path(self) -> dict[str, object]:
             return {"save_data_path": "/tmp/test"}
 
+        def get_global_health_snapshot(self) -> dict[str, object]:
+            return {"devices": {}}
+
+        def recover_detector(self, device_name: str, retries: int = 1) -> dict[str, object]:
+            return {"device": device_name, "success": True}
+
         def set_config(self, name: str, value: object) -> dict[str, object]:
             return {"name": name, "value": value}
 
@@ -65,6 +71,8 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         "get_state",
         "get_current_mda_file",
         "get_save_data_path",
+        "get_global_health_snapshot",
+        "recover_detector",
         "acquire_image",
         "process_image",
         "dump_array",

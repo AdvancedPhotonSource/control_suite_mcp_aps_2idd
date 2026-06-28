@@ -153,3 +153,69 @@ def test_execute_plan_raises_on_failed_exit_status() -> None:
 
     with pytest.raises(RuntimeError, match="did not complete .* motor fault"):
         client._execute_plan("fly2d_scanrecord", {})
+
+
+class FakeRecoveryRM:
+    """Fake RE manager for exercising the recover_detector pause/resume flow."""
+
+    def __init__(self, *, initial_state: str = "running") -> None:
+        self._state = initial_state
+        self.pause_calls: list[str | None] = []
+        self.resume_calls: int = 0
+        self.functions: list[tuple[object, bool]] = []
+
+    def status(self):
+        return {"re_state": self._state}
+
+    def re_pause(self, *, option=None):
+        self.pause_calls.append(option)
+        self._state = "paused"
+        return {"success": True}
+
+    def re_resume(self):
+        self.resume_calls += 1
+        self._state = "running"
+        return {"success": True}
+
+    def function_execute(self, item, *, user=None, user_group=None, lock_key=None, run_in_background=False):
+        self.functions.append((item, run_in_background))
+        return {"success": True, "task_uid": "task-1"}
+
+    def wait_for_completed_task(self, task_uid, timeout=None):
+        pass
+
+    def task_result(self, *, task_uid):
+        return {"result": {"return_value": {"device": "xmap", "success": True}}}
+
+
+def test_recover_detector_pauses_resets_and_resumes() -> None:
+    rm = FakeRecoveryRM(initial_state="running")
+    client = make_client(rm)
+
+    result = client.recover_detector("xmap", retries=2, settle_time_s=0.0)
+
+    # A running scan is paused immediately, then resumed after the reset.
+    assert rm.pause_calls == ["immediate"]
+    assert rm.resume_calls == 1
+    # The allowlisted recover_detector function is run in the background.
+    item, run_in_background = rm.functions[0]
+    assert item["name"] == "recover_detector"
+    assert item["kwargs"] == {"device_name": "xmap", "retries": 2}
+    assert run_in_background is True
+    assert result["device"] == "xmap"
+    assert result["success"] is True
+    assert "RE paused" in result["progress"]
+    assert "RE resumed" in result["progress"]
+
+
+def test_recover_detector_leaves_already_paused_re_paused() -> None:
+    rm = FakeRecoveryRM(initial_state="paused")
+    client = make_client(rm)
+
+    result = client.recover_detector("eiger", settle_time_s=0.0)
+
+    # Already paused on entry: do not pause or resume; leave the RE paused.
+    assert rm.pause_calls == []
+    assert rm.resume_calls == 0
+    assert rm._state == "paused"
+    assert result["success"] is True

@@ -79,6 +79,10 @@ def load_config_file(path: str | Path, *, required: bool = False) -> dict[str, A
         "qserver_move_zp_z_plan": qserver.get("move_zp_z"),
         "qserver_get_save_data_path_function": qserver.get("get_save_data_path", "get_save_data_path"),
         "qserver_get_current_mda_file_function": qserver.get("get_current_mda_file", "get_current_mda_file"),
+        "qserver_get_global_health_snapshot_function": qserver.get(
+            "get_global_health_snapshot", "get_global_health_snapshot"
+        ),
+        "qserver_recover_detector_function": qserver.get("recover_detector", "recover_detector"),
     }
 
 
@@ -122,6 +126,8 @@ def build_qserver_connection_config(args: argparse.Namespace) -> QServerConnecti
             move_zp_z=args.qserver_move_zp_z_plan,
             get_save_data_path=args.qserver_get_save_data_path_function,
             get_current_mda_file=args.qserver_get_current_mda_file_function,
+            get_global_health_snapshot=args.qserver_get_global_health_snapshot_function,
+            recover_detector=args.qserver_recover_detector_function,
         ),
     )
 
@@ -213,6 +219,45 @@ def create_mcp(
         auto-storage path), or null when the savedata device is unavailable.
         """
         return await call_backend("get_save_data_path")
+
+    @mcp.tool()
+    async def get_global_health_snapshot() -> dict[str, Any]:
+        """Return a beamline + scan device health snapshot from QueueServer.
+
+        The result is a snapshot of the form
+        ``{"timestamp": ..., "devices": {name: {"pvs": {pv: {...}}}}}`` covering
+        devices such as ``ring``, ``sample``, ``scanrecord``, the area detectors
+        (``xmap``/``xp3``/``eiger``), and ``fly_dwell``. Each PV entry carries
+        ``value``/``char_value``, ``connected``, ``error``, and ``timestamp``.
+
+        This is the observable for beamline and in-progress scan health
+        monitoring: feed it to a health evaluator to detect no/low ring beam,
+        hung sample axes, hung detectors, or a paused scan. Safe to poll while a
+        scan is running.
+        """
+        return await call_backend("get_global_health_snapshot")
+
+    @mcp.tool()
+    async def recover_detector(
+        device_name: Annotated[
+            str,
+            "Area detector to recover, e.g. 'xmap', 'xp3', or 'eiger'.",
+        ],
+        retries: Annotated[int, "Number of detector reset attempts."] = 1,
+    ) -> dict[str, Any]:
+        """Attempt to recover (unhang) a stalled area detector.
+
+        If a plan is currently running it is paused (immediate) before the
+        detector is reset through the allowlisted QueueServer ``recover_detector``
+        function, then the scan is resumed. If the run engine was already paused,
+        it is left paused. Use this when health monitoring reports a
+        ``detector_hung`` anomaly. The result includes ``device``, ``success``,
+        and a ``progress`` list describing the pause/reset/resume steps taken.
+        """
+        return await call_backend(
+            "recover_detector",
+            {"device_name": device_name, "retries": retries},
+        )
 
     async def set_config(
         name: Annotated[str, "Writable configuration attribute name."],
@@ -508,6 +553,8 @@ def build_parser(
         "qserver_move_zp_z_plan": None,
         "qserver_get_save_data_path_function": "get_save_data_path",
         "qserver_get_current_mda_file_function": "get_current_mda_file",
+        "qserver_get_global_health_snapshot_function": "get_global_health_snapshot",
+        "qserver_recover_detector_function": "recover_detector",
     }
     if config_defaults:
         defaults.update(dict(config_defaults))
@@ -546,6 +593,8 @@ def build_parser(
     parser.add_argument("--qserver-move-sample-plan", default=defaults["qserver_move_sample_plan"])
     parser.add_argument("--qserver-get-save-data-path-function", default=defaults["qserver_get_save_data_path_function"])
     parser.add_argument("--qserver-get-current-mda-file-function", default=defaults["qserver_get_current_mda_file_function"])
+    parser.add_argument("--qserver-get-global-health-snapshot-function", default=defaults["qserver_get_global_health_snapshot_function"])
+    parser.add_argument("--qserver-recover-detector-function", default=defaults["qserver_recover_detector_function"])
     parser.add_argument("--qserver-move-zp-z-plan", default=defaults["qserver_move_zp_z_plan"])
     return parser
 

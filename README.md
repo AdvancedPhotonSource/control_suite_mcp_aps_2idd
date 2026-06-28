@@ -72,6 +72,8 @@ http://127.0.0.1:8050/mcp
 - `get_state()`
 - `get_current_mda_file()`
 - `get_save_data_path()`
+- `get_global_health_snapshot()`
+- `recover_detector(device_name, retries=1)`
 - `acquire_image(width, height, x_center, y_center, stepsize_x, stepsize_y, dwell_ms=None)`
 - `process_image(current_mda_file, save_data_path=None, plot_in_log_scale=None, show_colorbar=None, channels=None)`
 - `dump_array(buffer_name)`
@@ -111,6 +113,17 @@ For an HTTP MCP client:
   waits for the RE manager to return to idle and reads the outcome from
   QueueServer history. `task_uid` is only produced by QueueServer *functions*
   (e.g. `get_save_data_path`).
+- `get_global_health_snapshot()` returns a beamline + scan device snapshot
+  (`{"timestamp": ..., "devices": {name: {"pvs": {...}}}}`) covering `ring`,
+  `sample`, `scanrecord`, the area detectors, and `fly_dwell`. It is the
+  observable for beamline/scan health monitoring and is safe to poll while a
+  scan runs (executed as a background QueueServer function). The device set is
+  driven by the beamline monitor manifest (`qserver.beamline_monitor_manifest`).
+- `recover_detector(device_name, retries=1)` attempts to unhang a stalled area
+  detector (e.g. `xmap`, `xp3`, `eiger`). If a plan is running it pauses the RE
+  (immediate), resets the detector through the allowlisted QueueServer
+  `recover_detector` function, then resumes; an already-paused RE is left paused.
+  The result includes `device`, `success`, and a `progress` step list.
 - `acquire_image` and `acquire_line_scan` stream live scan progress as MCP
   progress notifications, sourced from the QueueServer console (ZMQ info)
   output. Their results report `item_uid`, `run_uids`, `scan_ids`,

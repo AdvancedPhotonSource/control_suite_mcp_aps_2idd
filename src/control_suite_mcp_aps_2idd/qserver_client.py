@@ -34,10 +34,13 @@ class QServerActionConfig:
     - ``move_zp_z`` backs the MCP ``set_parameters`` path for zp-z motion.
     - ``get_save_data_path`` fetches current save-path metadata.
     - ``get_current_mda_file`` fetches the current/next MDA file name.
+    - ``get_global_health_snapshot`` fetches a beamline/scan device snapshot.
+    - ``recover_detector`` resets a hung area detector.
 
     All motion and acquisition actions are expected to be QueueServer plans in
-    the current design. ``get_save_data_path`` and ``get_current_mda_file``
-    remain QueueServer helper functions because they are metadata lookups
+    the current design. ``get_save_data_path``, ``get_current_mda_file``,
+    ``get_global_health_snapshot``, and ``recover_detector`` remain QueueServer
+    helper functions because they are metadata lookups or maintenance actions
     rather than motion or scan items.
     """
 
@@ -47,6 +50,8 @@ class QServerActionConfig:
     move_zp_z: str | None = None
     get_save_data_path: str = "get_save_data_path"
     get_current_mda_file: str = "get_current_mda_file"
+    get_global_health_snapshot: str = "get_global_health_snapshot"
+    recover_detector: str = "recover_detector"
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,14 @@ class QServerConnectionConfig:
                 get_current_mda_file=os.getenv(
                     "QSERVER_GET_CURRENT_MDA_FILE_FUNCTION",
                     "get_current_mda_file",
+                ),
+                get_global_health_snapshot=os.getenv(
+                    "QSERVER_GET_GLOBAL_HEALTH_SNAPSHOT_FUNCTION",
+                    "get_global_health_snapshot",
+                ),
+                recover_detector=os.getenv(
+                    "QSERVER_RECOVER_DETECTOR_FUNCTION",
+                    "recover_detector",
                 ),
             ),
         )
@@ -164,6 +177,131 @@ class RestrictedQServerClient:
             self.config.actions.get_current_mda_file,
             timeout=timeout,
         )
+
+    def get_global_health_snapshot(self, *, timeout: float | None = None) -> Any:
+        """Run the allowlisted QueueServer function returning a device snapshot.
+
+        The snapshot describes beamline and scan devices and their PV values
+        (``{"timestamp": ..., "devices": {name: {"pvs": {...}}}}``) and is the
+        observable consumed by the beamline/scan health evaluation. It runs in
+        the background so it can be polled while a scan is executing.
+        """
+        return self._execute_function(
+            self.config.actions.get_global_health_snapshot,
+            call_kwargs={"manifest_path": self.config.beamline_monitor_manifest_path},
+            timeout=timeout,
+            run_in_background=True,
+        )
+
+    def recover_detector(
+        self,
+        device_name: str,
+        *,
+        retries: int = 1,
+        timeout: float | None = None,
+        pause_timeout: float = 10.0,
+        resume_timeout: float = 10.0,
+        settle_time_s: float = 0.2,
+    ) -> dict[str, Any]:
+        """Recover (unhang) a stalled area detector, pausing the RE if needed.
+
+        Mirrors the bsgui recovery flow: if a plan is running, the RE is paused
+        (immediate) before the detector is reset through the allowlisted
+        ``recover_detector`` QueueServer function, then resumed afterward. If
+        the RE was already paused on entry, it is left paused. Progress steps
+        are collected and returned under ``progress``.
+        """
+        paused_by_request = False
+        progress: list[str] = []
+
+        def note(message: str) -> None:
+            progress.append(message)
+            logger.info("recover_detector: %s", message)
+
+        try:
+            if self._re_state() != "paused":
+                note("Pausing RE")
+                pause_response = self._rm.re_pause(option="immediate")
+                if isinstance(pause_response, Mapping) and not pause_response.get("success", True):
+                    note("Failed to pause RE")
+                    return {
+                        "device": device_name,
+                        "success": False,
+                        "error": pause_response.get("msg") or "Failed to pause scan",
+                        "progress": progress,
+                    }
+                if not self._wait_for_re_state("paused", timeout=pause_timeout):
+                    note("Timed out waiting for RE pause")
+                    return {
+                        "device": device_name,
+                        "success": False,
+                        "error": "Timed out waiting for scan to pause",
+                        "progress": progress,
+                    }
+                note("RE paused")
+                paused_by_request = True
+
+            if settle_time_s > 0:
+                time.sleep(settle_time_s)
+
+            note(f"Resetting detector {device_name}")
+            result = self._execute_function(
+                self.config.actions.recover_detector,
+                call_kwargs={"device_name": device_name, "retries": retries},
+                timeout=timeout,
+                run_in_background=True,
+            )
+            if isinstance(result, Mapping):
+                payload = dict(result)
+            else:
+                payload = {"device": device_name, "success": result is not None, "result": result}
+            payload.setdefault("device", device_name)
+            payload["progress"] = progress
+            return payload
+        finally:
+            if paused_by_request:
+                if settle_time_s > 0:
+                    time.sleep(settle_time_s)
+                if self._re_state() == "paused":
+                    note("Resuming RE")
+                    try:
+                        resume_response = self._rm.re_resume()
+                    except Exception as exc:  # pragma: no cover - network path
+                        note(f"Failed to resume RE: {exc}")
+                    else:
+                        if isinstance(resume_response, Mapping) and not resume_response.get("success", True):
+                            note(f"Failed to resume RE: {resume_response.get('msg')}")
+                        elif not self._wait_for_re_state_change("paused", timeout=resume_timeout):
+                            note("Timed out waiting for RE resume")
+                        else:
+                            note("RE resumed")
+                else:
+                    note(f"Skipping resume because RE state is {self._re_state() or 'unknown'}")
+
+    def _re_state(self) -> str | None:
+        try:
+            state = self._rm.status().get("re_state")
+        except Exception:  # pragma: no cover - network path
+            return None
+        return state if isinstance(state, str) else None
+
+    def _wait_for_re_state(self, expected_state: str, *, timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() <= deadline:
+            state = self._re_state()
+            if state == expected_state:
+                return True
+            time.sleep(0.2)
+        return False
+
+    def _wait_for_re_state_change(self, previous_state: str, *, timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() <= deadline:
+            state = self._re_state()
+            if state is not None and state != previous_state:
+                return True
+            time.sleep(0.2)
+        return False
 
     def run_acquire_image(
         self,
