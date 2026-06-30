@@ -496,6 +496,23 @@ def test_get_global_health_snapshot_handles_missing_snapshot(
     assert "error" in result
 
 
+def test_evaluate_snapshot_returns_health_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy = DummyQServer()
+    monkeypatch.setattr(qserver_instrument, "RestrictedQServerClient", lambda config: dummy)
+    instrument = qserver_instrument.QServerAPSTwoIDDMICInstrument()
+
+    result = instrument.evaluate_snapshot()
+
+    # It fetches the global snapshot (which calls QueueServer) and returns only
+    # the evaluation report, not the raw device/PV snapshot.
+    assert dummy.health_snapshot_calls == [30.0]
+    assert set(result) == {"overall", "devices", "anomalies", "ring"}
+    assert "ring" in result["devices"]
+    assert "devices" not in result["devices"]  # not the raw snapshot
+
+
 def test_recover_detector_delegates_to_qserver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

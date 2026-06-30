@@ -222,20 +222,45 @@ def create_mcp(
 
     @mcp.tool(name="aps2idd_control.get_global_health_snapshot")
     async def get_global_health_snapshot() -> dict[str, Any]:
-        """Return a beamline + scan device health snapshot from QueueServer.
+        """Return a beamline + scan device health snapshot, evaluated server-side.
 
         The result is a snapshot of the form
         ``{"timestamp": ..., "devices": {name: {"pvs": {pv: {...}}}}}`` covering
-        devices such as ``ring``, ``sample``, ``scanrecord``, the area detectors
-        (``xmap``/``xp3``/``eiger``), and ``fly_dwell``. Each PV entry carries
+        devices such as ``ring``, ``sample``, ``scanrecord_fly``,
+        ``scanrecord_step``, ``kohzu_mono``, and ``zp_z`` (the area detectors are
+        not currently part of this snapshot). Each PV entry carries
         ``value``/``char_value``, ``connected``, ``error``, and ``timestamp``.
 
-        This is the observable for beamline and in-progress scan health
-        monitoring: feed it to a health evaluator to detect no/low ring beam,
-        hung sample axes, hung detectors, or a paused scan. Safe to poll while a
-        scan is running.
+        After QueueServer returns the raw snapshot, the health evaluator runs on
+        it and the verdict is attached under the ``evaluation`` key:
+        ``{"overall": "ok"|"warning"|"error", "devices": {name: severity},
+        "anomalies": [{"kind", "severity", "message", ...}], "ring":
+        {"current", "mode"}}``. Anomaly kinds include ``no_beam``,
+        ``low_ring_current``, ``sample_hung``, ``scan_paused``, and
+        ``detector_hung`` (dormant until detectors join the snapshot).
+
+        Safe to poll while a scan is running.
         """
         return await call_backend("get_global_health_snapshot")
+
+    @mcp.tool(name="aps2idd_control.evaluate_snapshot")
+    async def evaluate_snapshot() -> dict[str, Any]:
+        """Evaluate beamline + scan health and return just the verdict.
+
+        Fetches the global health snapshot from QueueServer and runs the health
+        evaluator (``health.evaluate_snapshot``) on it, returning only the
+        evaluation report:
+        ``{"overall": "ok"|"warning"|"error", "devices": {name: severity},
+        "anomalies": [{"kind", "severity", "message", ...}], "ring":
+        {"current", "mode"}}``.
+
+        Use this when you want the health verdict and actionable anomalies rather
+        than the full device/PV snapshot returned by
+        ``get_global_health_snapshot``. Anomaly kinds include ``no_beam``,
+        ``low_ring_current``, ``sample_hung``, ``scan_paused``, and
+        ``detector_hung``. Safe to poll while a scan is running.
+        """
+        return await call_backend("evaluate_snapshot")
 
     @mcp.tool(name="aps2idd_control.recover_detector")
     async def recover_detector(

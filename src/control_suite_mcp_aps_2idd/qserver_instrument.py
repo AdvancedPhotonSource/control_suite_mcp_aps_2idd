@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from control_suite_mcp_aps_2idd.acquisition_processing import APSMICPostProcessor
 from control_suite_mcp_aps_2idd.common import (
@@ -14,6 +17,7 @@ from control_suite_mcp_aps_2idd.common import (
     json_safe,
     validate_position_in_range,
 )
+from control_suite_mcp_aps_2idd.health import evaluate_snapshot as evaluate_health
 from control_suite_mcp_aps_2idd.qserver_client import (
     QServerConnectionConfig,
     RestrictedQServerClient,
@@ -109,18 +113,60 @@ class QServerAPSTwoIDDMICInstrument:
         )
 
     def get_global_health_snapshot(self) -> dict[str, Any]:
-        """Return a beamline + scan device health snapshot from QueueServer.
+        """Return a beamline + scan device health snapshot, evaluated server-side.
 
-        The snapshot has a ``devices`` mapping (ring, sample, scanrecord,
-        detectors, etc.), each with a ``pvs`` mapping of PV readings. It is the
-        observable consumed by beamline/scan health evaluation.
+        The snapshot has a ``devices`` mapping (ring, sample, scanrecord_fly,
+        scanrecord_step, kohzu_mono, zp_z, ...), each with a ``pvs`` mapping of
+        PV readings. After QueueServer returns the raw snapshot, the health
+        evaluator (``health.evaluate_snapshot``) runs on it and the verdict is
+        attached under the ``evaluation`` key (``overall``, ``devices``,
+        ``anomalies``, ``ring``).
         """
         snapshot = self.qserver.get_global_health_snapshot(timeout=30.0)
         if snapshot is None:
             return json_safe(
                 {"devices": {}, "error": "Health snapshot unavailable from QueueServer."}
             )
-        return json_safe(snapshot)
+        safe = json_safe(snapshot)
+        try:
+            safe["evaluation"] = evaluate_health(safe)
+        except Exception as exc:
+            logger.exception("Failed to evaluate health snapshot")
+            safe["evaluation"] = self._evaluation_error(exc)
+        return safe
+
+    @staticmethod
+    def _evaluation_error(exc: Exception) -> dict[str, Any]:
+        return {
+            "overall": "error",
+            "devices": {},
+            "anomalies": [
+                {
+                    "kind": "evaluation_error",
+                    "severity": "error",
+                    "message": f"Health evaluation failed: {exc}",
+                }
+            ],
+            "ring": {"current": None, "mode": ""},
+        }
+
+    def evaluate_snapshot(self) -> dict[str, Any]:
+        """Evaluate the current beamline + scan health and return the verdict.
+
+        Fetches the global health snapshot from QueueServer and runs the health
+        evaluator (``health.evaluate_snapshot``) on it, returning only the
+        evaluation report (``overall``, ``devices``, ``anomalies``, ``ring``)
+        rather than the full device/PV snapshot.
+        """
+        snapshot = self.get_global_health_snapshot()
+        evaluation = snapshot.get("evaluation") if isinstance(snapshot, Mapping) else None
+        if isinstance(evaluation, dict):
+            return evaluation
+        try:
+            return evaluate_health(snapshot)
+        except Exception as exc:
+            logger.exception("Failed to evaluate health snapshot")
+            return self._evaluation_error(exc)
 
     def recover_detector(self, device_name: str, retries: int = 1) -> dict[str, Any]:
         """Recover (unhang) a stalled area detector through QueueServer.

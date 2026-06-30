@@ -72,6 +72,7 @@ def test_mcp_server_exposes_required_contract_tools() -> None:
         "aps2idd_control.get_current_mda_file",
         "aps2idd_control.get_save_data_path",
         "aps2idd_control.get_global_health_snapshot",
+        "aps2idd_control.evaluate_snapshot",
         "aps2idd_control.recover_detector",
         "aps2idd_control.acquire_image",
         "aps2idd_control.process_image",
