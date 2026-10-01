@@ -12,6 +12,8 @@ import sys
 import tomllib
 
 from fastmcp import Context, FastMCP
+from fastmcp.tools import ToolResult
+from fastmcp.utilities.types import Image
 
 from control_suite_mcp_aps_2idd.common import APSTwoIDDConfig, parse_range
 from control_suite_mcp_aps_2idd.qserver_client import QServerActionConfig, QServerConnectionConfig
@@ -20,6 +22,15 @@ from control_suite_mcp_aps_2idd.qserver_instrument import QServerAPSTwoIDDMICIns
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = "config.toml"
+
+
+async def _image_tool_result(payload: dict[str, Any], *, include_images: bool) -> ToolResult:
+    """Preserve the JSON payload and optionally attach its PNG as MCP image content."""
+    result = ToolResult(structured_content=payload)
+    if include_images and payload.get("img_path"):
+        image = Image(path=payload["img_path"], format="png")
+        result.content.append(await asyncio.to_thread(image.to_image_content))
+    return result
 
 
 def _stringify_range(value: Any) -> str | None:
@@ -49,6 +60,7 @@ def load_config_file(path: str | Path, *, required: bool = False) -> dict[str, A
         "host": data.get("host", "127.0.0.1"),
         "port": data.get("port", 8050),
         "path": data.get("path", "/mcp"),
+        "include_images": bool(data.get("include_images", True)),
         "sample_name": data.get("sample_name", "smp1"),
         "dwell_imaging": data.get("dwell_imaging", 0.05),
         "dwell_line_scan": data.get("dwell_line_scan", 0.2),
@@ -136,6 +148,7 @@ def create_mcp(
     *,
     service_config: APSTwoIDDConfig | None = None,
     qserver_connection_config: QServerConnectionConfig | None = None,
+    include_images: bool = True,
 ) -> FastMCP:
     """Create the FastMCP server."""
     mcp = FastMCP("Control Suite MCP APS 2-ID-D")
@@ -298,7 +311,10 @@ def create_mcp(
         """Alias for ``set_config`` used by EAA MCP acquisition proxy."""
         return await call_backend("set_attribute", {"name": name, "value": value})
 
-    @mcp.tool(name="aps2idd_control.acquire_image")
+    @mcp.tool(
+        name="aps2idd_control.acquire_image",
+        output_schema={"additionalProperties": True, "type": "object"},
+    )
     async def acquire_image(
         width: Annotated[float, "The width of the scan area in microns."],
         height: Annotated[float, "The height of the scan area in microns."],
@@ -318,7 +334,7 @@ def create_mcp(
             "Dwell time per point in milliseconds; uses the configured "
             "dwell_imaging value when omitted.",
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         """Acquire a 2D MIC image in microns centered at ``(x_center, y_center)``.
 
         The beamline moves during the scan through QueueServer. Live scan
@@ -327,9 +343,11 @@ def create_mcp(
         ``item_uid``, ``run_uids``, ``scan_ids``, ``save_data_path``, and
         ``current_mda_file`` (the MDA file this scan wrote), plus ``img_path``
         for the rendered PNG and ``raw_data_path`` for the saved 2D ``.npy``
-        array. Artifact paths are absolute.
+        array. Artifact paths are absolute. When the server's ``include_images``
+        setting is enabled (default), the PNG is included as MCP image content
+        alongside the JSON payload.
         """
-        return await run_acquisition_with_progress(
+        payload = await run_acquisition_with_progress(
             "acquire_image",
             {
                 "width": width,
@@ -342,8 +360,12 @@ def create_mcp(
             },
             ctx,
         )
+        return await _image_tool_result(payload, include_images=include_images)
 
-    @mcp.tool(name="aps2idd_control.process_image")
+    @mcp.tool(
+        name="aps2idd_control.process_image",
+        output_schema={"additionalProperties": True, "type": "object"},
+    )
     async def process_image(
         current_mda_file: Annotated[
             str,
@@ -369,7 +391,7 @@ def create_mcp(
             "XRF element channels to select; uses the configured xrf_elms "
             "when omitted.",
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         """Post-process an already-acquired MDA file into PNG/NPY artifacts.
 
         Runs the same postprocessing as ``acquire_image`` on existing data,
@@ -377,9 +399,11 @@ def create_mcp(
         beamline motion, no new QueueServer plan). The result contains
         ``img_path`` (rendered PNG), ``raw_data_path`` (2D ``.npy`` array),
         ``channel``, ``h5_path``, ``mda_path``, ``save_data_path``, and
-        ``current_mda_file``. Artifact paths are absolute.
+        ``current_mda_file``. Artifact paths are absolute. When the server's
+        ``include_images`` setting is enabled (default), the PNG is included
+        as MCP image content alongside the JSON payload.
         """
-        return await call_backend(
+        payload = await call_backend(
             "process_image",
             {
                 "current_mda_file": current_mda_file,
@@ -389,6 +413,7 @@ def create_mcp(
                 "channels": channels,
             },
         )
+        return await _image_tool_result(payload, include_images=include_images)
 
     @mcp.tool(name="aps2idd_control.dump_array")
     async def dump_array(
@@ -412,7 +437,10 @@ def create_mcp(
         return await call_backend("get_attribute_payload", {"name": name})
         
 
-    @mcp.tool(name="aps2idd_control.acquire_line_scan")
+    @mcp.tool(
+        name="aps2idd_control.acquire_line_scan",
+        output_schema={"additionalProperties": True, "type": "object"},
+    )
     async def acquire_line_scan(
         positioner_name: Annotated[
             str,
@@ -453,7 +481,7 @@ def create_mcp(
             "Dwell time per point in milliseconds; uses the configured "
             "dwell_line_scan value when omitted.",
         ] = None,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         """Acquire a 1D line scan by driving the chosen positioner through QueueServer.
 
         This tool allows you to perform 3 types of operations:
@@ -482,9 +510,11 @@ def create_mcp(
         ``raw_data_path`` for the saved line-profile ``.npy`` array, and
         ``gaussian_fit_params`` containing ``fwhm``, ``a``, ``mu``,
         ``sigma``, ``c``, ``normalized_residual``, ``x_min``, and ``x_max``.
-        Artifact paths are absolute.
+        Artifact paths are absolute. When the server's ``include_images``
+        setting is enabled (default), the PNG is included as MCP image content
+        alongside the JSON payload.
         """
-        return await run_acquisition_with_progress(
+        payload = await run_acquisition_with_progress(
             "acquire_line_scan",
             {
                 "positioner_name": positioner_name,
@@ -499,6 +529,7 @@ def create_mcp(
             },
             ctx,
         )
+        return await _image_tool_result(payload, include_images=include_images)
 
     @mcp.tool(name="aps2idd_control.move_sample")
     async def move_sample(
@@ -548,6 +579,7 @@ def build_parser(
         "host": "127.0.0.1",
         "port": 8050,
         "path": "/mcp",
+        "include_images": True,
         "sample_name": "smp1",
         "dwell_imaging": 0.05,
         "dwell_line_scan": 0.2,
@@ -589,6 +621,12 @@ def build_parser(
     parser.add_argument("--host", default=defaults["host"])
     parser.add_argument("--port", type=int, default=defaults["port"])
     parser.add_argument("--path", default=defaults["path"])
+    parser.add_argument(
+        "--include-images",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["include_images"],
+        help="Include PNGs as MCP image content alongside JSON (default: enabled).",
+    )
     parser.add_argument("--sample-name", default=defaults["sample_name"])
     parser.add_argument("--dwell-imaging", type=float, default=defaults["dwell_imaging"])
     parser.add_argument("--dwell-line-scan", type=float, default=defaults["dwell_line_scan"])
@@ -652,6 +690,7 @@ def main() -> None:
     mcp = create_mcp(
         service_config=build_service_config(args),
         qserver_connection_config=build_qserver_connection_config(args),
+        include_images=args.include_images,
     )
     mcp.run(transport="http", host=args.host, port=args.port, path=args.path)
 

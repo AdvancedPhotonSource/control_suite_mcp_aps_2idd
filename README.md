@@ -40,6 +40,11 @@ provides the default MCP server configuration, including:
 
 CLI flags still override TOML values when needed.
 
+Images are included directly in MCP responses by default. Set the top-level
+`include_images = false` in `config.toml` or pass `--no-include-images` to return
+only text content, preserving the full JSON payload and `img_path`. Pass
+`--include-images` to enable images even when disabled in TOML.
+
 ## Run
 
 Start the MCP server with the repo config:
@@ -151,6 +156,10 @@ For an HTTP MCP client:
   `show_colorbar`, and `channels` default to the service configuration. It
   returns `img_path`, `raw_data_path`, `channel`, `h5_path`, `mda_path`,
   `save_data_path`, and `current_mda_file`.
+- `acquire_image`, `acquire_line_scan`, and `process_image` also include the
+  rendered PNG as an MCP image content block when `include_images` is enabled
+  (default). The full JSON payload, including `img_path`, is preserved in both
+  text content and structured content in either mode.
 - `aps2idd_control.acquire_line_scan` drives the axis named by `positioner_name`
   (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a

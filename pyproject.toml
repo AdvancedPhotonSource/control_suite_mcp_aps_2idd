@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "bluesky-queueserver-api",
-    "fastmcp>=2.0",
+    "fastmcp>=3.0",
     "h5py",
     "matplotlib",
     "numpy",
