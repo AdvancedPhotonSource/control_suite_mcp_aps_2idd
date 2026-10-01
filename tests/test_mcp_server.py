@@ -3,11 +3,77 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import time
 
 from fastmcp import Client
+import pytest
 
 import control_suite_mcp_aps_2idd.mcp_server as mcp_server
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("acquire_image", {
+            "width": 1.0, "height": 1.0, "x_center": 0.0, "y_center": 0.0,
+            "stepsize_x": 1.0, "stepsize_y": 1.0,
+        }),
+        ("process_image", {"current_mda_file": "test.mda"}),
+        ("acquire_line_scan", {"positioner_name": "x", "length": 1.0, "stepsize": 0.1}),
+    ],
+)
+@pytest.mark.parametrize("with_image", [True, False])
+def test_image_tools_preserve_payload_and_embed_png(
+    monkeypatch, tmp_path, tool_name, arguments, with_image,
+) -> None:
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5WQ"
+        "AAAAASUVORK5CYII="
+    )
+    payload = {
+        "item_uid": "uid-img", "run_uids": ["run-1"], "scan_ids": [1],
+        "raw_data_path": str(tmp_path / "image.npy"),
+        "gaussian_fit_params": {"fwhm": 0.5},
+    }
+    if with_image:
+        img_path = tmp_path / "image.png"
+        img_path.write_bytes(png)
+        payload["img_path"] = str(img_path)
+
+    class FakeInstrument:
+        def image_result(self, **kwargs):
+            return payload
+
+        acquire_image = process_image = acquire_line_scan = image_result
+
+    monkeypatch.setattr(
+        mcp_server, "QServerAPSTwoIDDMICInstrument", lambda *a, **k: FakeInstrument()
+    )
+    mcp = mcp_server.create_mcp()
+
+    async def run():
+        tools = {tool.name: tool for tool in await mcp.list_tools()}
+        assert tools[f"aps2idd_control.{tool_name}"].output_schema == {
+            "additionalProperties": True, "type": "object",
+        }
+        async with Client(mcp, timeout=5) as client:
+            return await client.call_tool(f"aps2idd_control.{tool_name}", arguments)
+
+    result = asyncio.run(run())
+
+    assert not result.is_error
+    assert result.structured_content == payload
+    assert result.data == payload
+    assert result.content[0].type == "text"
+    assert json.loads(result.content[0].text) == payload
+    assert [block.type for block in result.content] == (
+        ["text", "image"] if with_image else ["text"]
+    )
+    if with_image:
+        assert result.content[1].mimeType == "image/png"
+        assert base64.b64decode(result.content[1].data, validate=True) == png
 
 
 def test_mcp_server_exposes_required_contract_tools() -> None:

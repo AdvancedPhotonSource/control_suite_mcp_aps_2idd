@@ -151,6 +151,9 @@ For an HTTP MCP client:
   `show_colorbar`, and `channels` default to the service configuration. It
   returns `img_path`, `raw_data_path`, `channel`, `h5_path`, `mda_path`,
   `save_data_path`, and `current_mda_file`.
+- `acquire_image`, `acquire_line_scan`, and `process_image` also include the
+  rendered PNG as an MCP image content block. The full JSON payload, including
+  `img_path`, is preserved in both text content and structured content.
 - `aps2idd_control.acquire_line_scan` drives the axis named by `positioner_name`
   (`x`, `y`, `z`, or `energy`); `length`, `center`, and `stepsize` are in that
   positioner's units (microns for x/y/z, keV for energy). **`center` is a
