@@ -1,6 +1,7 @@
 host = "0.0.0.0"
 port = 8050
 path = "/mcp"
+include_images = true
 
 sample_name = "2dpsk_crystals"
 dwell_imaging = 0.05

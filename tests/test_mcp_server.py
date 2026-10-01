@@ -25,9 +25,11 @@ import control_suite_mcp_aps_2idd.mcp_server as mcp_server
     ],
 )
 @pytest.mark.parametrize("with_image", [True, False])
+@pytest.mark.parametrize("server_options", [{}, {"include_images": True}, {"include_images": False}])
 def test_image_tools_preserve_payload_and_embed_png(
-    monkeypatch, tmp_path, tool_name, arguments, with_image,
+    monkeypatch, tmp_path, tool_name, arguments, with_image, server_options,
 ) -> None:
+    include_images = server_options.get("include_images", True)
     png = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5WQ"
         "AAAAASUVORK5CYII="
@@ -39,7 +41,8 @@ def test_image_tools_preserve_payload_and_embed_png(
     }
     if with_image:
         img_path = tmp_path / "image.png"
-        img_path.write_bytes(png)
+        if include_images:
+            img_path.write_bytes(png)
         payload["img_path"] = str(img_path)
 
     class FakeInstrument:
@@ -51,7 +54,7 @@ def test_image_tools_preserve_payload_and_embed_png(
     monkeypatch.setattr(
         mcp_server, "QServerAPSTwoIDDMICInstrument", lambda *a, **k: FakeInstrument()
     )
-    mcp = mcp_server.create_mcp()
+    mcp = mcp_server.create_mcp(**server_options)
 
     async def run():
         tools = {tool.name: tool for tool in await mcp.list_tools()}
@@ -69,9 +72,9 @@ def test_image_tools_preserve_payload_and_embed_png(
     assert result.content[0].type == "text"
     assert json.loads(result.content[0].text) == payload
     assert [block.type for block in result.content] == (
-        ["text", "image"] if with_image else ["text"]
+        ["text", "image"] if with_image and include_images else ["text"]
     )
-    if with_image:
+    if with_image and include_images:
         assert result.content[1].mimeType == "image/png"
         assert base64.b64decode(result.content[1].data, validate=True) == png
 
@@ -225,3 +228,38 @@ move_zp_z = "move_zp_z"
     assert args.qserver_control_addr == "tcp://example:60615"
     assert args.qserver_move_sample_plan == "move_sample"
     assert args.qserver_move_zp_z_plan == "move_zp_z"
+
+
+@pytest.mark.parametrize(
+    ("config_text", "flags", "expected"),
+    [
+        ("", [], True),
+        ("include_images = true", [], True),
+        ("include_images = false", [], False),
+        ("", ["--no-include-images"], False),
+        ("include_images = true", ["--no-include-images"], False),
+        ("include_images = false", ["--include-images"], True),
+    ],
+)
+def test_image_response_configuration_reaches_server(
+    monkeypatch, tmp_path, config_text, flags, expected,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(config_text)
+    monkeypatch.setattr(
+        "sys.argv", ["control-suite-aps-2idd-mcp", "--config", str(config_path), *flags]
+    )
+    captured = {}
+
+    class FakeServer:
+        def run(self, **kwargs):
+            pass
+
+    def create_mcp(**kwargs):
+        captured.update(kwargs)
+        return FakeServer()
+
+    monkeypatch.setattr(mcp_server, "create_mcp", create_mcp)
+    mcp_server.main()
+
+    assert captured["include_images"] is expected

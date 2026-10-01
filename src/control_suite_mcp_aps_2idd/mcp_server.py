@@ -24,10 +24,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = "config.toml"
 
 
-async def _image_tool_result(payload: dict[str, Any]) -> ToolResult:
-    """Preserve the JSON payload and attach its PNG as MCP image content."""
+async def _image_tool_result(payload: dict[str, Any], *, include_images: bool) -> ToolResult:
+    """Preserve the JSON payload and optionally attach its PNG as MCP image content."""
     result = ToolResult(structured_content=payload)
-    if payload.get("img_path"):
+    if include_images and payload.get("img_path"):
         image = Image(path=payload["img_path"], format="png")
         result.content.append(await asyncio.to_thread(image.to_image_content))
     return result
@@ -60,6 +60,7 @@ def load_config_file(path: str | Path, *, required: bool = False) -> dict[str, A
         "host": data.get("host", "127.0.0.1"),
         "port": data.get("port", 8050),
         "path": data.get("path", "/mcp"),
+        "include_images": bool(data.get("include_images", True)),
         "sample_name": data.get("sample_name", "smp1"),
         "dwell_imaging": data.get("dwell_imaging", 0.05),
         "dwell_line_scan": data.get("dwell_line_scan", 0.2),
@@ -147,6 +148,7 @@ def create_mcp(
     *,
     service_config: APSTwoIDDConfig | None = None,
     qserver_connection_config: QServerConnectionConfig | None = None,
+    include_images: bool = True,
 ) -> FastMCP:
     """Create the FastMCP server."""
     mcp = FastMCP("Control Suite MCP APS 2-ID-D")
@@ -341,8 +343,9 @@ def create_mcp(
         ``item_uid``, ``run_uids``, ``scan_ids``, ``save_data_path``, and
         ``current_mda_file`` (the MDA file this scan wrote), plus ``img_path``
         for the rendered PNG and ``raw_data_path`` for the saved 2D ``.npy``
-        array. Artifact paths are absolute. The PNG is also included as MCP
-        image content alongside the JSON payload.
+        array. Artifact paths are absolute. When the server's ``include_images``
+        setting is enabled (default), the PNG is included as MCP image content
+        alongside the JSON payload.
         """
         payload = await run_acquisition_with_progress(
             "acquire_image",
@@ -357,7 +360,7 @@ def create_mcp(
             },
             ctx,
         )
-        return await _image_tool_result(payload)
+        return await _image_tool_result(payload, include_images=include_images)
 
     @mcp.tool(
         name="aps2idd_control.process_image",
@@ -396,8 +399,9 @@ def create_mcp(
         beamline motion, no new QueueServer plan). The result contains
         ``img_path`` (rendered PNG), ``raw_data_path`` (2D ``.npy`` array),
         ``channel``, ``h5_path``, ``mda_path``, ``save_data_path``, and
-        ``current_mda_file``. Artifact paths are absolute. The PNG is also
-        included as MCP image content alongside the JSON payload.
+        ``current_mda_file``. Artifact paths are absolute. When the server's
+        ``include_images`` setting is enabled (default), the PNG is included
+        as MCP image content alongside the JSON payload.
         """
         payload = await call_backend(
             "process_image",
@@ -409,7 +413,7 @@ def create_mcp(
                 "channels": channels,
             },
         )
-        return await _image_tool_result(payload)
+        return await _image_tool_result(payload, include_images=include_images)
 
     @mcp.tool(name="aps2idd_control.dump_array")
     async def dump_array(
@@ -506,8 +510,9 @@ def create_mcp(
         ``raw_data_path`` for the saved line-profile ``.npy`` array, and
         ``gaussian_fit_params`` containing ``fwhm``, ``a``, ``mu``,
         ``sigma``, ``c``, ``normalized_residual``, ``x_min``, and ``x_max``.
-        Artifact paths are absolute. The PNG is also included as MCP image
-        content alongside the JSON payload.
+        Artifact paths are absolute. When the server's ``include_images``
+        setting is enabled (default), the PNG is included as MCP image content
+        alongside the JSON payload.
         """
         payload = await run_acquisition_with_progress(
             "acquire_line_scan",
@@ -524,7 +529,7 @@ def create_mcp(
             },
             ctx,
         )
-        return await _image_tool_result(payload)
+        return await _image_tool_result(payload, include_images=include_images)
 
     @mcp.tool(name="aps2idd_control.move_sample")
     async def move_sample(
@@ -574,6 +579,7 @@ def build_parser(
         "host": "127.0.0.1",
         "port": 8050,
         "path": "/mcp",
+        "include_images": True,
         "sample_name": "smp1",
         "dwell_imaging": 0.05,
         "dwell_line_scan": 0.2,
@@ -615,6 +621,12 @@ def build_parser(
     parser.add_argument("--host", default=defaults["host"])
     parser.add_argument("--port", type=int, default=defaults["port"])
     parser.add_argument("--path", default=defaults["path"])
+    parser.add_argument(
+        "--include-images",
+        action=argparse.BooleanOptionalAction,
+        default=defaults["include_images"],
+        help="Include PNGs as MCP image content alongside JSON (default: enabled).",
+    )
     parser.add_argument("--sample-name", default=defaults["sample_name"])
     parser.add_argument("--dwell-imaging", type=float, default=defaults["dwell_imaging"])
     parser.add_argument("--dwell-line-scan", type=float, default=defaults["dwell_line_scan"])
@@ -678,6 +690,7 @@ def main() -> None:
     mcp = create_mcp(
         service_config=build_service_config(args),
         qserver_connection_config=build_qserver_connection_config(args),
+        include_images=args.include_images,
     )
     mcp.run(transport="http", host=args.host, port=args.port, path=args.path)
 
